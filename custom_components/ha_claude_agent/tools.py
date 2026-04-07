@@ -37,7 +37,7 @@ def create_ha_mcp_server(hass: HomeAssistant):
         service = args["service"]
         entity_id = args["entity_id"]
         raw_data = args.get("service_data", "{}")
-        _LOGGER.debug("call_service: %s.%s on %s", domain, service, entity_id)
+        _LOGGER.info("call_service: %s.%s on %s", domain, service, entity_id)
 
         # Security: only allow service calls on exposed entities
         if not async_should_expose(hass, "conversation", entity_id):

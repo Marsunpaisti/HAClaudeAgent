@@ -131,14 +131,11 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 user_input.conversation_id
             )
 
-        _LOGGER.debug(
-            "Handling message: model=%s, effort=%s, max_turns=%s, "
-            "resuming_session=%s, prompt_length=%d",
+        _LOGGER.info(
+            "Handling message: model=%s, effort=%s, resume=%s",
             model,
             self.subentry.data.get(CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT),
-            self.subentry.data.get(CONF_MAX_TURNS, DEFAULT_MAX_TURNS),
             session_id is not None,
-            len(system_prompt),
         )
 
         effort = self.subentry.data.get(
@@ -184,7 +181,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     and message.subtype == "init"
                 ):
                     new_session_id = message.data.get("session_id")
-                    _LOGGER.debug("New session started: %s", new_session_id)
+                    _LOGGER.info("New session started: %s", new_session_id)
 
                 # Accumulate text from all assistant messages
                 elif isinstance(message, AssistantMessage):
@@ -192,13 +189,13 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                         if isinstance(block, TextBlock):
                             text_parts.append(block.text)
                         elif hasattr(block, "name"):
-                            _LOGGER.debug("Tool call: %s", block.name)
+                            _LOGGER.info("Tool call: %s", block.name)
 
                 # Final result takes priority over accumulated text
                 elif isinstance(message, ResultMessage):
                     if hasattr(message, "session_id") and message.session_id:
                         new_session_id = message.session_id
-                    _LOGGER.debug(
+                    _LOGGER.info(
                         "Result: subtype=%s, cost=$%s",
                         message.subtype,
                         getattr(message, "total_cost_usd", "?"),
