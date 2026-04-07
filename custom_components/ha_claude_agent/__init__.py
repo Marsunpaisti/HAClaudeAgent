@@ -19,7 +19,7 @@ PLATFORMS = [Platform.CONVERSATION]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
-MAX_SESSIONS = 500
+MAX_SESSIONS = 50
 
 
 class BoundedSessionMap(OrderedDict):
