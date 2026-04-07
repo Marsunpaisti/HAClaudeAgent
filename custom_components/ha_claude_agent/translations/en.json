@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HA Claude Agent",
+        "description": "Configure the HA Claude Agent conversation integration.",
+        "data": {
+          "api_key": "API Key"
+        },
+        "data_description": {
+          "api_key": "Anthropic API key. Leave empty to use a key configured elsewhere."
+        }
+      }
+    }
+  }
+}

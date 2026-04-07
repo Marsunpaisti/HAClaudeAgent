@@ -1,0 +1,12 @@
+{
+  "domain": "ha_claude_agent",
+  "name": "HA Claude Agent",
+  "codeowners": ["@Paisti"],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/Paisti/HAClaudeAgent",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}
