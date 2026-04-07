@@ -2,15 +2,17 @@
 
 DOMAIN = "ha_claude_agent"
 
-CONF_API_KEY = "api_key"
+CONF_ADDON_HOST = "addon_host"
+CONF_ADDON_PORT = "addon_port"
 CONF_CHAT_MODEL = "chat_model"
 CONF_MAX_TOKENS = "max_tokens"
 CONF_TEMPERATURE = "temperature"
 CONF_PROMPT = "prompt"
-CONF_CLI_PATH = "cli_path"
 CONF_THINKING_EFFORT = "thinking_effort"
 CONF_MAX_TURNS = "max_turns"
 
+DEFAULT_ADDON_HOST = "local-ha-claude-agent"
+DEFAULT_ADDON_PORT = 8099
 DEFAULT_CHAT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 1.0
@@ -28,4 +30,4 @@ When controlling devices, confirm what you did.
 
 DEFAULT_MAX_TURNS = 10
 
-MCP_SERVER_NAME = "homeassistant"
+QUERY_TIMEOUT_SECONDS = 300
