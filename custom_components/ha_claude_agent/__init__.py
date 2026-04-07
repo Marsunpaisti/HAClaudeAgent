@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +16,8 @@ from .const import CONF_API_KEY, CONF_CLI_PATH, DOMAIN
 from .tools import create_ha_mcp_server
 
 PLATFORMS = [Platform.CONVERSATION]
+
+_LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -50,6 +53,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: HAClaudeAgentConfigEntry
 ) -> bool:
     """Set up HA Claude Agent from a config entry."""
+    _LOGGER.debug("Setting up HA Claude Agent entry %s", entry.entry_id)
     mcp_server = create_ha_mcp_server(hass)
 
     entry.runtime_data = HAClaudeAgentRuntimeData(
@@ -59,6 +63,14 @@ async def async_setup_entry(
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _LOGGER.info(
+        "HA Claude Agent set up with %d conversation subentries",
+        sum(
+            1
+            for s in entry.subentries.values()
+            if s.subentry_type == "conversation"
+        ),
+    )
     return True
 
 

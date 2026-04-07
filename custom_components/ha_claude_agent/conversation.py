@@ -131,6 +131,16 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 user_input.conversation_id
             )
 
+        _LOGGER.debug(
+            "Handling message: model=%s, effort=%s, max_turns=%s, "
+            "resuming_session=%s, prompt_length=%d",
+            model,
+            self.subentry.data.get(CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT),
+            self.subentry.data.get(CONF_MAX_TURNS, DEFAULT_MAX_TURNS),
+            session_id is not None,
+            len(system_prompt),
+        )
+
         effort = self.subentry.data.get(
             CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT
         )
@@ -174,17 +184,25 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     and message.subtype == "init"
                 ):
                     new_session_id = message.data.get("session_id")
+                    _LOGGER.debug("New session started: %s", new_session_id)
 
                 # Accumulate text from all assistant messages
                 elif isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             text_parts.append(block.text)
+                        elif hasattr(block, "name"):
+                            _LOGGER.debug("Tool call: %s", block.name)
 
                 # Final result takes priority over accumulated text
                 elif isinstance(message, ResultMessage):
                     if hasattr(message, "session_id") and message.session_id:
                         new_session_id = message.session_id
+                    _LOGGER.debug(
+                        "Result: subtype=%s, cost=$%s",
+                        message.subtype,
+                        getattr(message, "total_cost_usd", "?"),
+                    )
                     if message.subtype == "success" and message.result:
                         result_text = message.result
 
@@ -209,6 +227,11 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         # --- Store session mapping for conversation continuity ---
         if new_session_id:
             runtime_data.sessions[chat_log.conversation_id] = new_session_id
+            _LOGGER.debug(
+                "Session stored: conversation_id=%s -> session_id=%s",
+                chat_log.conversation_id,
+                new_session_id,
+            )
 
         # --- Add response to HA's ChatLog ---
         if result_text:

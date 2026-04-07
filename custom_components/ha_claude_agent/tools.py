@@ -37,9 +37,13 @@ def create_ha_mcp_server(hass: HomeAssistant):
         service = args["service"]
         entity_id = args["entity_id"]
         raw_data = args.get("service_data", "{}")
+        _LOGGER.debug("call_service: %s.%s on %s", domain, service, entity_id)
 
         # Security: only allow service calls on exposed entities
         if not async_should_expose(hass, "conversation", entity_id):
+            _LOGGER.warning(
+                "Blocked service call on unexposed entity: %s", entity_id
+            )
             return {
                 "content": [
                     {
@@ -97,6 +101,7 @@ def create_ha_mcp_server(hass: HomeAssistant):
     )
     async def get_entity_state(args: dict[str, Any]) -> dict[str, Any]:
         entity_id = args["entity_id"]
+        _LOGGER.debug("get_entity_state: %s", entity_id)
         state = hass.states.get(entity_id)
 
         if state is None:
@@ -133,6 +138,7 @@ def create_ha_mcp_server(hass: HomeAssistant):
     )
     async def list_entities(args: dict[str, Any]) -> dict[str, Any]:
         domain_filter = args.get("domain", "")
+        _LOGGER.debug("list_entities: domain_filter=%s", domain_filter or "(all)")
         entities = []
 
         for state in hass.states.async_all():
