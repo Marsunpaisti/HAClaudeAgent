@@ -3,12 +3,62 @@
     "step": {
       "user": {
         "title": "Set up HA Claude Agent",
-        "description": "Configure the HA Claude Agent conversation integration.",
+        "description": "Enter your Anthropic API key to get started.",
         "data": {
-          "api_key": "API Key"
+          "api_key": "API Key",
+          "cli_path": "Claude CLI path (optional)"
         },
         "data_description": {
-          "api_key": "Anthropic API key. Leave empty to use a key configured elsewhere."
+          "api_key": "Your Anthropic API key from console.anthropic.com.",
+          "cli_path": "Path to the 'claude' CLI binary. Leave empty to use the default."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "API key is required.",
+      "cannot_connect": "Failed to connect to the Claude Agent SDK.",
+      "unknown": "An unexpected error occurred."
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "initiate_flow": {
+        "user": "Add conversation agent"
+      },
+      "step": {
+        "user": {
+          "title": "Add conversation agent",
+          "data": {
+            "name": "Name",
+            "chat_model": "Model",
+            "max_tokens": "Max output tokens",
+            "temperature": "Temperature",
+            "prompt": "System prompt"
+          },
+          "data_description": {
+            "name": "Name of this conversation agent.",
+            "chat_model": "Claude model to use for responses.",
+            "max_tokens": "Maximum number of tokens in the response.",
+            "temperature": "Controls randomness. Lower is more focused, higher is more creative.",
+            "prompt": "Custom instructions for the AI agent. Appended to the HA context."
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure conversation agent",
+          "data": {
+            "name": "Name",
+            "chat_model": "Model",
+            "max_tokens": "Max output tokens",
+            "temperature": "Temperature",
+            "prompt": "System prompt"
+          },
+          "data_description": {
+            "name": "Name of this conversation agent.",
+            "chat_model": "Claude model to use for responses.",
+            "max_tokens": "Maximum number of tokens in the response.",
+            "temperature": "Controls randomness. Lower is more focused, higher is more creative.",
+            "prompt": "Custom instructions for the AI agent. Appended to the HA context."
+          }
         }
       }
     }
