@@ -137,6 +137,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             model=model,
             system_prompt=system_prompt,
             mcp_servers={MCP_SERVER_NAME: runtime_data.mcp_server},
+            tools=allowed_tools,
             allowed_tools=allowed_tools,
             max_turns=max_turns,
             env={"ANTHROPIC_API_KEY": runtime_data.api_key},
