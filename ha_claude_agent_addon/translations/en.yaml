@@ -1,0 +1,6 @@
+configuration:
+  auth_token:
+    name: Claude auth token
+    description: >-
+      Your Claude Code OAuth token (from 'claude setup-token') or Anthropic API key
+      (from console.anthropic.com). The OAuth token works with Claude Pro/Max subscriptions.
