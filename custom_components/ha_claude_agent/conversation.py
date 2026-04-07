@@ -4,17 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from claude_agent_sdk import (
-    AssistantMessage,
-    CLIJSONDecodeError,
-    CLINotFoundError,
-    ClaudeAgentOptions,
-    ProcessError,
-    ResultMessage,
-    SystemMessage,
-    TextBlock,
-    query,
-)
+import aiohttp
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation import (
@@ -24,11 +14,13 @@ from homeassistant.components.conversation import (
     ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
+    async_should_expose,
 )
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, intent
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -41,36 +33,45 @@ from .const import (
     DEFAULT_PROMPT,
     DEFAULT_THINKING_EFFORT,
     DOMAIN,
-    MCP_SERVER_NAME,
+    QUERY_TIMEOUT_SECONDS,
 )
 from .helpers import build_system_prompt
 
 _LOGGER = logging.getLogger(__name__)
 
-# User-facing error messages
+# Error messages keyed by error_code from the add-on response
 _ERROR_MESSAGES = {
     "error_max_turns": (
-        "I used all {turns} tool calls and couldn't finish. "
+        "Used all tool turns and couldn't finish. "
         "Try a simpler request or increase the max turns setting."
     ),
-    "error_max_budget_usd": (
-        "This request hit the spending limit (${cost:.4f}). "
-        "Try a simpler request."
+    "error_max_budget_usd": "This request hit the spending limit.",
+    "error_during_execution": "Something went wrong while processing.",
+    "authentication_failed": (
+        "Claude authentication failed. "
+        "Check the auth token in the add-on settings."
     ),
-    "error_during_execution": "Something went wrong while processing: {detail}",
-    "error_max_structured_output_retries": (
-        "I couldn't produce a valid structured response. Please try again."
+    "billing_error": (
+        "Billing issue — check your account at console.anthropic.com."
     ),
-}
-
-_ASSISTANT_ERROR_MESSAGES = {
-    "authentication_failed": "Anthropic API key is invalid. Check your integration settings.",
-    "billing_error": "Anthropic billing issue — check your account at console.anthropic.com.",
-    "rate_limit": "Rate limited by the Anthropic API. Please wait a moment and try again.",
-    "invalid_request": "Invalid request sent to Claude. Check the logs for details.",
-    "server_error": "Anthropic's servers are having issues. Try again shortly.",
-    "max_output_tokens": "Response was cut short — it exceeded the output token limit.",
-    "unknown": "An unknown error occurred while communicating with Claude.",
+    "rate_limit": "Rate limited. Please wait a moment and try again.",
+    "cli_not_found": (
+        "Claude Code CLI not found in the add-on container. "
+        "Try restarting the add-on."
+    ),
+    "process_error": (
+        "Claude Code process crashed. Check the add-on logs."
+    ),
+    "parse_error": (
+        "Received an invalid response from Claude. Try again."
+    ),
+    "internal_error": (
+        "An unexpected error occurred in the add-on."
+    ),
+    "addon_unreachable": (
+        "Cannot reach the HA Claude Agent add-on. "
+        "Is the add-on installed and running?"
+    ),
 }
 
 
@@ -143,33 +144,29 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             conversation_id=chat_log.conversation_id,
         )
 
+    def _get_exposed_entity_ids(self) -> list[str]:
+        """Return entity IDs exposed to the conversation agent."""
+        return [
+            state.entity_id
+            for state in self.hass.states.async_all()
+            if async_should_expose(
+                self.hass, "conversation", state.entity_id
+            )
+        ]
+
     async def _async_handle_message(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
     ) -> ConversationResult:
-        """Handle a conversation turn via the Claude Agent SDK."""
+        """Handle a conversation turn by delegating to the add-on."""
         runtime_data = self.entry.runtime_data
 
-        # --- Build options for this turn ---
+        # ── Build request payload ──
         model = self.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         user_prompt = self.subentry.data.get(CONF_PROMPT, DEFAULT_PROMPT)
         system_prompt = build_system_prompt(self.hass, user_prompt)
 
-        # Tool name prefix: mcp__{server_name}__{tool_name}
-        tool_prefix = f"mcp__{MCP_SERVER_NAME}__"
-        allowed_tools = [
-            # HA MCP tools
-            f"{tool_prefix}call_service",
-            f"{tool_prefix}get_entity_state",
-            f"{tool_prefix}list_entities",
-            # Built-in Claude Code tools
-            "Read",
-            "WebFetch",
-            "WebSearch",
-        ]
-
-        # Check for existing session to resume
         session_id: str | None = None
         if user_input.conversation_id:
             session_id = runtime_data.sessions.get(
@@ -188,160 +185,66 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             model, effort, session_id is not None,
         )
 
-        env: dict[str, str] = {}
-        if runtime_data.api_key:
-            env["ANTHROPIC_API_KEY"] = runtime_data.api_key
+        payload = {
+            "prompt": user_input.text,
+            "model": model,
+            "system_prompt": system_prompt,
+            "max_turns": max_turns,
+            "effort": effort,
+            "session_id": session_id,
+            "exposed_entities": self._get_exposed_entity_ids(),
+        }
 
-        options = ClaudeAgentOptions(
-            model=model,
-            system_prompt=system_prompt,
-            mcp_servers={MCP_SERVER_NAME: runtime_data.mcp_server},
-            tools=allowed_tools,
-            allowed_tools=allowed_tools,
-            max_turns=max_turns,
-            env=env,
-            permission_mode="dontAsk",
-            effort=effort,
-        )
-
-        # If resuming, set the resume session_id
-        if session_id:
-            options.resume = session_id
-
-        # If a CLI path was configured, set it
-        if runtime_data.cli_path:
-            options.cli_path = runtime_data.cli_path
-
-        # --- Run the agent and collect results ---
-        new_session_id: str | None = None
-        text_parts: list[str] = []
-        result_text = ""
-        assistant_error: str | None = None
+        # ── Call the add-on ──
+        addon_url = runtime_data.addon_url
+        http_session = async_get_clientsession(self.hass)
 
         try:
-            async for message in query(
-                prompt=user_input.text,
-                options=options,
-            ):
-                # Capture session ID for future turns
-                if (
-                    isinstance(message, SystemMessage)
-                    and message.subtype == "init"
-                ):
-                    new_session_id = message.data.get("session_id")
-                    _LOGGER.info("New session started: %s", new_session_id)
-
-                # Accumulate text from assistant messages, check for errors
-                elif isinstance(message, AssistantMessage):
-                    if message.error:
-                        assistant_error = message.error
-                        _LOGGER.warning(
-                            "Assistant error: %s", message.error
-                        )
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            text_parts.append(block.text)
-                        elif hasattr(block, "name"):
-                            _LOGGER.info("Tool call: %s", block.name)
-
-                # Handle result — success or error subtypes
-                elif isinstance(message, ResultMessage):
-                    if hasattr(message, "session_id") and message.session_id:
-                        new_session_id = message.session_id
-                    _LOGGER.info(
-                        "Result: subtype=%s, turns=%s, cost=$%s",
-                        message.subtype,
-                        getattr(message, "num_turns", "?"),
-                        getattr(message, "total_cost_usd", "?"),
-                    )
-                    if message.subtype == "success":
-                        if message.result:
-                            result_text = message.result
-                    else:
-                        # Error subtypes
-                        errors = getattr(message, "errors", [])
-                        detail = "; ".join(errors) if errors else message.subtype
-                        _LOGGER.error(
-                            "Agent loop error: %s — %s", message.subtype, detail
-                        )
-                        error_template = _ERROR_MESSAGES.get(
-                            message.subtype,
-                            "Agent stopped unexpectedly: {detail}",
-                        )
-                        result_text = error_template.format(
-                            turns=getattr(message, "num_turns", "?"),
-                            cost=getattr(message, "total_cost_usd", 0),
-                            detail=detail,
-                        )
-
-            # Use ResultMessage text if available, otherwise join text blocks
-            if not result_text and text_parts:
-                result_text = "\n\n".join(text_parts)
-
-            # If we got an assistant-level error but no result text yet,
-            # surface it to the user
-            if not result_text and assistant_error:
-                user_msg = _ASSISTANT_ERROR_MESSAGES.get(
-                    assistant_error,
-                    f"Claude encountered an error: {assistant_error}",
-                )
-                return self._error_response(
-                    user_msg, chat_log, user_input.language
-                )
-
-        except CLINotFoundError as err:
-            _LOGGER.error(
-                "Claude Code CLI not found: %s — Install it with: "
-                "npm install -g @anthropic-ai/claude-code",
-                err,
-            )
+            async with http_session.post(
+                f"{addon_url}/query",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(
+                    total=QUERY_TIMEOUT_SECONDS
+                ),
+            ) as resp:
+                data = await resp.json()
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.error("Add-on request failed: %s", err)
             return self._error_response(
-                "Claude Code CLI is not installed on this system. "
-                "See the integration documentation for setup instructions.",
+                _ERROR_MESSAGES["addon_unreachable"],
                 chat_log,
                 user_input.language,
             )
 
-        except ProcessError as err:
-            _LOGGER.error(
-                "Claude Code process failed (exit code %s): %s",
-                err.exit_code,
-                err,
+        # ── Process response ──
+        error_code = data.get("error_code")
+        result_text = data.get("result_text") or ""
+        new_session_id = data.get("session_id")
+
+        _LOGGER.info(
+            "Add-on response: error=%s, session=%s, cost=$%s, turns=%s",
+            error_code,
+            new_session_id,
+            data.get("cost_usd"),
+            data.get("num_turns"),
+        )
+
+        # If error with no result text, show a user-friendly message
+        if error_code and not result_text:
+            msg = _ERROR_MESSAGES.get(
+                error_code, f"Add-on error: {error_code}"
             )
             return self._error_response(
-                f"Claude Code process crashed (exit code {err.exit_code}). "
-                "Check the Home Assistant logs for details.",
-                chat_log,
-                user_input.language,
+                msg, chat_log, user_input.language
             )
 
-        except CLIJSONDecodeError as err:
-            _LOGGER.error("Failed to parse Claude Code response: %s", err)
-            return self._error_response(
-                "Received an invalid response from Claude Code. "
-                "This may be a temporary issue — try again.",
-                chat_log,
-                user_input.language,
-            )
-
-        except Exception:
-            _LOGGER.exception("Unexpected Claude Agent SDK error")
-            return self._error_response(
-                "An unexpected error occurred. Check the Home Assistant logs.",
-                chat_log,
-                user_input.language,
-            )
-
-        # --- Store session mapping for conversation continuity ---
+        # ── Store session mapping ──
         if new_session_id:
-            runtime_data.sessions[chat_log.conversation_id] = new_session_id
-            _LOGGER.debug(
-                "Session stored: conversation_id=%s -> session_id=%s",
-                chat_log.conversation_id,
-                new_session_id,
+            runtime_data.sessions[chat_log.conversation_id] = (
+                new_session_id
             )
 
-        # --- Add response to HA's ChatLog ---
+        # ── Build HA response ──
         if result_text:
             chat_log.async_add_assistant_content_without_tools(
                 AssistantContent(
@@ -350,9 +253,12 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 )
             )
 
-        # --- Build HA response ---
-        intent_response = intent.IntentResponse(language=user_input.language)
-        intent_response.async_set_speech(result_text or "I have no response.")
+        intent_response = intent.IntentResponse(
+            language=user_input.language
+        )
+        intent_response.async_set_speech(
+            result_text or "I have no response."
+        )
         return ConversationResult(
             response=intent_response,
             conversation_id=chat_log.conversation_id,
