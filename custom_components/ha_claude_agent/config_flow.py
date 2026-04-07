@@ -76,30 +76,26 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            api_key = user_input.get(CONF_API_KEY, "").strip()
-            if not api_key:
-                errors["base"] = "invalid_auth"
-            else:
-                return self.async_create_entry(
-                    title="HA Claude Agent",
-                    data={
-                        CONF_API_KEY: api_key,
-                        CONF_CLI_PATH: user_input.get(CONF_CLI_PATH, ""),
-                    },
-                    subentries=[
-                        {
-                            "subentry_type": "conversation",
-                            "data": dict(DEFAULT_SUBENTRY_DATA),
-                            "title": DEFAULT_CONVERSATION_NAME,
-                        }
-                    ],
-                )
+            return self.async_create_entry(
+                title="HA Claude Agent",
+                data={
+                    CONF_API_KEY: user_input.get(CONF_API_KEY, "").strip(),
+                    CONF_CLI_PATH: user_input.get(CONF_CLI_PATH, ""),
+                },
+                subentries=[
+                    {
+                        "subentry_type": "conversation",
+                        "data": dict(DEFAULT_SUBENTRY_DATA),
+                        "title": DEFAULT_CONVERSATION_NAME,
+                    }
+                ],
+            )
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_API_KEY): TextSelector(
+                    vol.Optional(CONF_API_KEY): TextSelector(
                         TextSelectorConfig(type=TextSelectorType.PASSWORD)
                     ),
                     vol.Optional(CONF_CLI_PATH, default=""): str,

@@ -188,6 +188,10 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             model, effort, session_id is not None,
         )
 
+        env: dict[str, str] = {}
+        if runtime_data.api_key:
+            env["ANTHROPIC_API_KEY"] = runtime_data.api_key
+
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -195,7 +199,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             tools=allowed_tools,
             allowed_tools=allowed_tools,
             max_turns=max_turns,
-            env={"ANTHROPIC_API_KEY": runtime_data.api_key},
+            env=env,
             permission_mode="dontAsk",
             effort=effort,
         )
