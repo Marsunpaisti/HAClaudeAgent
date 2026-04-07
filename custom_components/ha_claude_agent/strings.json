@@ -34,6 +34,7 @@
             "max_tokens": "Max output tokens",
             "temperature": "Temperature",
             "thinking_effort": "Thinking effort",
+            "max_turns": "Max tool turns",
             "prompt": "System prompt"
           },
           "data_description": {
@@ -42,6 +43,7 @@
             "max_tokens": "Maximum number of tokens in the response.",
             "temperature": "Controls randomness. Lower is more focused, higher is more creative.",
             "thinking_effort": "How much reasoning effort Claude uses. Higher means slower but more thorough.",
+            "max_turns": "Maximum number of tool-use round trips per conversation turn.",
             "prompt": "Custom instructions for the AI agent. Appended to the HA context."
           }
         },
@@ -53,6 +55,7 @@
             "max_tokens": "Max output tokens",
             "temperature": "Temperature",
             "thinking_effort": "Thinking effort",
+            "max_turns": "Max tool turns",
             "prompt": "System prompt"
           },
           "data_description": {
@@ -61,6 +64,7 @@
             "max_tokens": "Maximum number of tokens in the response.",
             "temperature": "Controls randomness. Lower is more focused, higher is more creative.",
             "thinking_effort": "How much reasoning effort Claude uses. Higher means slower but more thorough.",
+            "max_turns": "Maximum number of tool-use round trips per conversation turn.",
             "prompt": "Custom instructions for the AI agent. Appended to the HA context."
           }
         }

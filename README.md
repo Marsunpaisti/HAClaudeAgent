@@ -45,10 +45,11 @@ Each conversation agent (subentry) has its own settings:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| **Model** | `claude-sonnet-4-6` | Claude model to use. Options: `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6` |
+| **Model** | `claude-haiku-4-5-20251001` | Claude model to use. Options: `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6` |
 | **Max output tokens** | `1024` | Maximum tokens in the response |
 | **Temperature** | `1.0` | Controls randomness (0.0 = focused, 2.0 = creative) |
-| **Thinking effort** | `low` | Reasoning depth: `low`, `medium`, `high`, `max` |
+| **Thinking effort** | `medium` | Reasoning depth: `low`, `medium`, `high`, `max` |
+| **Max tool turns** | `10` | Maximum tool-use round trips per conversation turn |
 | **System prompt** | *(default)* | Custom instructions appended to the HA context |
 
 To add another agent: go to the integration page and click "Add conversation agent". Each agent can have different models and settings.

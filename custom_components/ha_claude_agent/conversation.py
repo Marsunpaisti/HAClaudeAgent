@@ -30,13 +30,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_MAX_TURNS,
     CONF_PROMPT,
     CONF_THINKING_EFFORT,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_MAX_TURNS,
     DEFAULT_PROMPT,
     DEFAULT_THINKING_EFFORT,
     DOMAIN,
-    MAX_TOOL_TURNS,
     MCP_SERVER_NAME,
 )
 from .helpers import build_system_prompt
@@ -128,13 +129,16 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         effort = self.subentry.data.get(
             CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT
         )
+        max_turns = int(
+            self.subentry.data.get(CONF_MAX_TURNS, DEFAULT_MAX_TURNS)
+        )
 
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
             mcp_servers={MCP_SERVER_NAME: runtime_data.mcp_server},
             allowed_tools=allowed_tools,
-            max_turns=MAX_TOOL_TURNS,
+            max_turns=max_turns,
             env={"ANTHROPIC_API_KEY": runtime_data.api_key},
             permission_mode="bypassPermissions",
             effort=effort,
