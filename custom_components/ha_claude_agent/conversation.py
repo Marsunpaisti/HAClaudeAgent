@@ -114,9 +114,14 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         # Tool name prefix: mcp__{server_name}__{tool_name}
         tool_prefix = f"mcp__{MCP_SERVER_NAME}__"
         allowed_tools = [
+            # HA MCP tools
             f"{tool_prefix}call_service",
             f"{tool_prefix}get_entity_state",
             f"{tool_prefix}list_entities",
+            # Built-in Claude Code tools
+            "Read",
+            "WebFetch",
+            "WebSearch",
         ]
 
         # Check for existing session to resume
