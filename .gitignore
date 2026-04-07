@@ -1,0 +1,5 @@
+.env
+**/.env
+**/*.local.json
+**/*.local.md
+.mcp.json
