@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,6 +19,19 @@ PLATFORMS = [Platform.CONVERSATION]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
+MAX_SESSIONS = 500
+
+
+class BoundedSessionMap(OrderedDict):
+    """OrderedDict that evicts oldest entries when max size is exceeded."""
+
+    def __setitem__(self, key: str, value: str) -> None:
+        super().__setitem__(key, value)
+        self.move_to_end(key)
+        while len(self) > MAX_SESSIONS:
+            self.popitem(last=False)
+
+
 @dataclass
 class HAClaudeAgentRuntimeData:
     """Runtime data for the HA Claude Agent integration."""
@@ -25,8 +39,8 @@ class HAClaudeAgentRuntimeData:
     api_key: str
     cli_path: str
     mcp_server: Any  # The MCP server object from create_sdk_mcp_server
-    sessions: dict[str, str] = field(default_factory=dict)
-    # Maps HA conversation_id -> SDK session_id
+    sessions: BoundedSessionMap = field(default_factory=BoundedSessionMap)
+    # Maps HA conversation_id -> SDK session_id (bounded LRU)
 
 
 type HAClaudeAgentConfigEntry = ConfigEntry[HAClaudeAgentRuntimeData]

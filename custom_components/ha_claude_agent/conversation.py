@@ -30,9 +30,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_MAX_TOKENS,
     CONF_PROMPT,
+    CONF_TEMPERATURE,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_MAX_TOKENS,
     DEFAULT_PROMPT,
+    DEFAULT_TEMPERATURE,
     DOMAIN,
     MAX_TOOL_TURNS,
     MCP_SERVER_NAME,
@@ -62,7 +66,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_supports_streaming = True
+    _attr_supports_streaming = False
     _attr_supported_features = ConversationEntityFeature.CONTROL
 
     def __init__(
@@ -123,6 +127,13 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 user_input.conversation_id
             )
 
+        max_tokens = int(
+            self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+        )
+        temperature = float(
+            self.subentry.data.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE)
+        )
+
         options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -130,7 +141,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             allowed_tools=allowed_tools,
             max_turns=MAX_TOOL_TURNS,
             env={"ANTHROPIC_API_KEY": runtime_data.api_key},
-            permission_mode="auto",
+            permission_mode="bypassPermissions",
         )
 
         # If resuming, set the resume session_id
@@ -166,6 +177,8 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
 
                 # Final result takes priority over accumulated text
                 elif isinstance(message, ResultMessage):
+                    if hasattr(message, "session_id") and message.session_id:
+                        new_session_id = message.session_id
                     if message.subtype == "success" and message.result:
                         result_text = message.result
 

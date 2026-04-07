@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from homeassistant.components.conversation import async_should_expose
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .const import MCP_SERVER_NAME
 
@@ -19,7 +18,7 @@ def build_system_prompt(
     Called on every turn so entity states are always current.
     """
     ha_name = hass.config.location_name or "Home"
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = dt_util.now().strftime("%Y-%m-%d %H:%M:%S %Z")
 
     # Gather exposed entities
     entity_lines: list[str] = []

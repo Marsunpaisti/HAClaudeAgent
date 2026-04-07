@@ -8,6 +8,7 @@ from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
+from homeassistant.components.conversation import async_should_expose
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def create_ha_mcp_server(hass: HomeAssistant):
         "call_service",
         "Call a Home Assistant service to control a device. "
         "Examples: domain='light', service='turn_on', entity_id='light.living_room'. "
-        "Pass additional service data as a JSON object string if needed.",
+        "service_data is a JSON object string for additional parameters; pass '{}' if none needed.",
         {
             "domain": str,
             "service": str,
@@ -36,6 +37,18 @@ def create_ha_mcp_server(hass: HomeAssistant):
         service = args["service"]
         entity_id = args["entity_id"]
         raw_data = args.get("service_data", "{}")
+
+        # Security: only allow service calls on exposed entities
+        if not async_should_expose(hass, "conversation", entity_id):
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Entity {entity_id} is not exposed to conversation agents.",
+                    }
+                ],
+                "is_error": True,
+            }
 
         try:
             extra_data = json.loads(raw_data) if raw_data else {}
@@ -113,8 +126,9 @@ def create_ha_mcp_server(hass: HomeAssistant):
 
     @tool(
         "list_entities",
-        "List all available Home Assistant entities, optionally filtered by domain "
-        "(e.g., 'light', 'switch', 'sensor'). Returns entity IDs, names, and states.",
+        "List Home Assistant entities filtered by domain "
+        "(e.g., 'light', 'switch', 'sensor'). Pass empty string to list all. "
+        "Returns entity IDs, names, and states.",
         {"domain": str},
     )
     async def list_entities(args: dict[str, Any]) -> dict[str, Any]:
