@@ -6,7 +6,8 @@ from homeassistant.components.conversation import async_should_expose
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .const import MCP_SERVER_NAME
+# Tool prefix matches the MCP server name in the add-on
+_TOOL_PREFIX = "mcp__homeassistant__"
 
 
 def build_system_prompt(
@@ -30,9 +31,9 @@ def build_system_prompt(
             f"- {state.entity_id}: {name} (state: {state.state})"
         )
 
-    entity_section = "\n".join(entity_lines) if entity_lines else "(none exposed)"
-
-    tool_prefix = f"mcp__{MCP_SERVER_NAME}__"
+    entity_section = (
+        "\n".join(entity_lines) if entity_lines else "(none exposed)"
+    )
 
     return f"""\
 {user_prompt}
@@ -46,9 +47,9 @@ These are the entities you can monitor and control:
 {entity_section}
 
 ## Available Tools
-Use `{tool_prefix}call_service` to control devices (turn on/off, set values, etc.).
-Use `{tool_prefix}get_entity_state` to check a device's current state and attributes.
-Use `{tool_prefix}list_entities` to discover entities by domain.
+Use `{_TOOL_PREFIX}call_service` to control devices (turn on/off, set values, etc.).
+Use `{_TOOL_PREFIX}get_entity_state` to check a device's current state and attributes.
+Use `{_TOOL_PREFIX}list_entities` to discover entities by domain.
 
 Only control entities listed above. If a user asks about an entity not listed, tell them it's not exposed to you.
 """
