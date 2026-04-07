@@ -141,7 +141,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             allowed_tools=allowed_tools,
             max_turns=max_turns,
             env={"ANTHROPIC_API_KEY": runtime_data.api_key},
-            permission_mode="bypassPermissions",
+            permission_mode="dontAsk",
             effort=effort,
         )
 
