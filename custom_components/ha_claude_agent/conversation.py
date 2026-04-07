@@ -143,6 +143,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
 
         # --- Run the agent and stream results ---
         new_session_id: str | None = None
+        text_parts: list[str] = []
         result_text = ""
 
         try:
@@ -157,16 +158,20 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 ):
                     new_session_id = message.data.get("session_id")
 
-                # Capture text from assistant messages
+                # Accumulate text from all assistant messages
                 elif isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            result_text = block.text
+                            text_parts.append(block.text)
 
-                # Capture final result
+                # Final result takes priority over accumulated text
                 elif isinstance(message, ResultMessage):
                     if message.subtype == "success" and message.result:
                         result_text = message.result
+
+            # Use ResultMessage if available, otherwise join all text blocks
+            if not result_text and text_parts:
+                result_text = "\n\n".join(text_parts)
 
         except Exception:
             _LOGGER.exception("Claude Agent SDK error")
