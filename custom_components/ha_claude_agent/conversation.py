@@ -285,10 +285,11 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     user_msg, chat_log, user_input.language
                 )
 
-        except CLINotFoundError:
+        except CLINotFoundError as err:
             _LOGGER.error(
-                "Claude Code CLI not found. Install it with: "
-                "npm install -g @anthropic-ai/claude-code"
+                "Claude Code CLI not found: %s — Install it with: "
+                "npm install -g @anthropic-ai/claude-code",
+                err,
             )
             return self._error_response(
                 "Claude Code CLI is not installed on this system. "
@@ -299,7 +300,9 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
 
         except ProcessError as err:
             _LOGGER.error(
-                "Claude Code process failed (exit code %s)", err.exit_code
+                "Claude Code process failed (exit code %s): %s",
+                err.exit_code,
+                err,
             )
             return self._error_response(
                 f"Claude Code process crashed (exit code {err.exit_code}). "
