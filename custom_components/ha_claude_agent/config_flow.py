@@ -35,12 +35,15 @@ from .const import (
     CONF_MAX_TOKENS,
     CONF_PROMPT,
     CONF_TEMPERATURE,
+    CONF_THINKING_EFFORT,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MAX_TOKENS,
     DEFAULT_PROMPT,
     DEFAULT_TEMPERATURE,
+    DEFAULT_THINKING_EFFORT,
     DOMAIN,
+    THINKING_EFFORT_OPTIONS,
 )
 
 MODELS = [
@@ -53,6 +56,7 @@ DEFAULT_SUBENTRY_DATA: dict[str, Any] = {
     CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
     CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
     CONF_TEMPERATURE: DEFAULT_TEMPERATURE,
+    CONF_THINKING_EFFORT: DEFAULT_THINKING_EFFORT,
     CONF_PROMPT: DEFAULT_PROMPT,
 }
 
@@ -189,6 +193,17 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                         max=2.0,
                         step=0.05,
                         mode=NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Optional(
+                    CONF_THINKING_EFFORT,
+                    default=defaults.get(
+                        CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT
+                    ),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=THINKING_EFFORT_OPTIONS,
+                        mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(

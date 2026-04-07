@@ -8,10 +8,14 @@ CONF_MAX_TOKENS = "max_tokens"
 CONF_TEMPERATURE = "temperature"
 CONF_PROMPT = "prompt"
 CONF_CLI_PATH = "cli_path"
+CONF_THINKING_EFFORT = "thinking_effort"
 
 DEFAULT_CHAT_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 1.0
+DEFAULT_THINKING_EFFORT = "low"
+
+THINKING_EFFORT_OPTIONS = ["low", "medium", "high", "max"]
 
 DEFAULT_CONVERSATION_NAME = "Claude Agent"
 
