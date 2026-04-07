@@ -1,0 +1,4 @@
+#!/usr/bin/with-contenv bashio
+
+bashio::log.warning "HA Claude Agent server stopped. Restarting in 5s..."
+sleep 5
