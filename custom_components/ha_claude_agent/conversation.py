@@ -2,19 +2,44 @@
 
 from __future__ import annotations
 
+import logging
+
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    SystemMessage,
+    TextBlock,
+    query,
+)
+
+from homeassistant.components import conversation
 from homeassistant.components.conversation import (
     AssistantContent,
     ChatLog,
     ConversationEntity,
+    ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, intent
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers import intent
 
-from .const import DOMAIN
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_PROMPT,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_PROMPT,
+    DOMAIN,
+    MAX_TOOL_TURNS,
+    MCP_SERVER_NAME,
+)
+from .helpers import build_system_prompt
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -22,8 +47,14 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up conversation entities."""
-    async_add_entities([HAClaudeAgentConversationEntity(config_entry)])
+    """Set up conversation entities from config subentries."""
+    for subentry in config_entry.subentries.values():
+        if subentry.subentry_type != "conversation":
+            continue
+        async_add_entities(
+            [HAClaudeAgentConversationEntity(config_entry, subentry)],
+            config_subentry_id=subentry.subentry_id,
+        )
 
 
 class HAClaudeAgentConversationEntity(ConversationEntity):
@@ -31,36 +62,144 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_supports_streaming = True
+    _attr_supported_features = ConversationEntityFeature.CONTROL
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(
+        self, config_entry: ConfigEntry, subentry: ConfigSubentry
+    ) -> None:
         """Initialize the entity."""
         self.entry = config_entry
-        self._attr_unique_id = config_entry.entry_id
+        self.subentry = subentry
+        self._attr_unique_id = subentry.subentry_id
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, subentry.subentry_id)},
+            name=subentry.title,
+            manufacturer="Anthropic",
+            model=subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
+            entry_type=dr.DeviceEntryType.SERVICE,
+        )
 
     @property
-    def supported_languages(self) -> list[str]:
-        """Return a list of supported languages."""
-        return ["en"]
+    def supported_languages(self) -> list[str] | str:
+        """Return MATCH_ALL — Claude supports all languages."""
+        return MATCH_ALL
+
+    async def async_added_to_hass(self) -> None:
+        """Register as a conversation agent when added to HA."""
+        await super().async_added_to_hass()
+        conversation.async_set_agent(self.hass, self.entry, self)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister as a conversation agent when removed."""
+        conversation.async_unset_agent(self.hass, self.entry)
+        await super().async_will_remove_from_hass()
 
     async def _async_handle_message(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
     ) -> ConversationResult:
-        """Handle an incoming message."""
-        # TODO: Implement Anthropic Agent SDK call here
-        chat_log.async_add_assistant_content_without_tools(
-            AssistantContent(
-                agent_id=user_input.agent_id,
-                content="Hello! HA Claude Agent is not yet implemented.",
+        """Handle a conversation turn via the Claude Agent SDK."""
+        runtime_data = self.entry.runtime_data
+
+        # --- Build options for this turn ---
+        model = self.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+        user_prompt = self.subentry.data.get(CONF_PROMPT, DEFAULT_PROMPT)
+        system_prompt = build_system_prompt(self.hass, user_prompt)
+
+        # Tool name prefix: mcp__{server_name}__{tool_name}
+        tool_prefix = f"mcp__{MCP_SERVER_NAME}__"
+        allowed_tools = [
+            f"{tool_prefix}call_service",
+            f"{tool_prefix}get_entity_state",
+            f"{tool_prefix}list_entities",
+        ]
+
+        # Check for existing session to resume
+        session_id: str | None = None
+        if user_input.conversation_id:
+            session_id = runtime_data.sessions.get(
+                user_input.conversation_id
             )
+
+        options = ClaudeAgentOptions(
+            model=model,
+            system_prompt=system_prompt,
+            mcp_servers={MCP_SERVER_NAME: runtime_data.mcp_server},
+            allowed_tools=allowed_tools,
+            max_turns=MAX_TOOL_TURNS,
+            env={"ANTHROPIC_API_KEY": runtime_data.api_key},
+            permission_mode="auto",
         )
-        response = intent.IntentResponse(language=user_input.language)
-        response.async_set_speech(
-            "Hello! HA Claude Agent is not yet implemented."
-        )
+
+        # If resuming, set the resume session_id
+        if session_id:
+            options.resume = session_id
+
+        # If a CLI path was configured, set it
+        if runtime_data.cli_path:
+            options.cli_path = runtime_data.cli_path
+
+        # --- Run the agent and stream results ---
+        new_session_id: str | None = None
+        result_text = ""
+
+        try:
+            async for message in query(
+                prompt=user_input.text,
+                options=options,
+            ):
+                # Capture session ID for future turns
+                if (
+                    isinstance(message, SystemMessage)
+                    and message.subtype == "init"
+                ):
+                    new_session_id = message.data.get("session_id")
+
+                # Capture text from assistant messages
+                elif isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            result_text = block.text
+
+                # Capture final result
+                elif isinstance(message, ResultMessage):
+                    if message.subtype == "success" and message.result:
+                        result_text = message.result
+
+        except Exception:
+            _LOGGER.exception("Claude Agent SDK error")
+            intent_response = intent.IntentResponse(
+                language=user_input.language
+            )
+            intent_response.async_set_error(
+                intent.IntentResponseErrorCode.UNKNOWN,
+                "Sorry, I encountered an error communicating with Claude.",
+            )
+            return ConversationResult(
+                response=intent_response,
+                conversation_id=chat_log.conversation_id,
+            )
+
+        # --- Store session mapping for conversation continuity ---
+        if new_session_id:
+            runtime_data.sessions[chat_log.conversation_id] = new_session_id
+
+        # --- Add response to HA's ChatLog ---
+        if result_text:
+            chat_log.async_add_assistant_content_without_tools(
+                AssistantContent(
+                    agent_id=user_input.agent_id,
+                    content=result_text,
+                )
+            )
+
+        # --- Build HA response ---
+        intent_response = intent.IntentResponse(language=user_input.language)
+        intent_response.async_set_speech(result_text or "I have no response.")
         return ConversationResult(
-            conversation_id=None,
-            response=response,
+            response=intent_response,
+            conversation_id=chat_log.conversation_id,
             continue_conversation=False,
         )
