@@ -13,13 +13,11 @@ import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
-
 from claude_agent_sdk import (
     AssistantMessage,
+    ClaudeAgentOptions,
     CLIJSONDecodeError,
     CLINotFoundError,
-    ClaudeAgentOptions,
     ProcessError,
     ResultMessage,
     SystemMessage,
@@ -27,7 +25,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
     query,
 )
-
+from fastapi import FastAPI
 from ha_client import HAClient
 from models import QueryRequest, QueryResponse
 from tools import create_ha_tools
@@ -105,7 +103,9 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
     """Run a Claude Agent SDK query and return the result."""
     _LOGGER.info(
         "Query: model=%s, effort=%s, max_turns=%d, resume=%s",
-        body.model, body.effort, body.max_turns,
+        body.model,
+        body.effort,
+        body.max_turns,
         body.session_id is not None,
     )
 
@@ -133,7 +133,6 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             model=body.model,
             system_prompt=body.system_prompt,
             mcp_servers={MCP_SERVER_NAME: mcp_server},
-            tools=allowed_tools,
             allowed_tools=allowed_tools,
             max_turns=body.max_turns,
             env=auth_env,
@@ -152,10 +151,7 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
         num_turns: int | None = None
 
         async for message in query(prompt=body.prompt, options=options):
-            if (
-                isinstance(message, SystemMessage)
-                and message.subtype == "init"
-            ):
+            if isinstance(message, SystemMessage) and message.subtype == "init":
                 new_session_id = message.data.get("session_id")
                 _LOGGER.info("Session started: %s", new_session_id)
 
@@ -176,16 +172,16 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
                 num_turns = message.num_turns
                 _LOGGER.info(
                     "Result: subtype=%s, turns=%s, cost=$%s",
-                    message.subtype, num_turns, cost_usd,
+                    message.subtype,
+                    num_turns,
+                    cost_usd,
                 )
                 if message.subtype == "success":
                     result_text = message.result or ""
                 else:
                     error_code = message.subtype
                     errors = getattr(message, "errors", [])
-                    result_text = (
-                        "; ".join(errors) if errors else message.subtype
-                    )
+                    result_text = "; ".join(errors) if errors else message.subtype
 
         if not result_text and text_parts:
             _LOGGER.warning(

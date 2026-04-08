@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 import aiohttp
-
 from homeassistant.components import conversation
 from homeassistant.components.conversation import (
     AssistantContent,
@@ -21,7 +20,8 @@ from homeassistant.components.homeassistant.exposed_entities import (
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, intent
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import intent
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -51,29 +51,18 @@ _ERROR_MESSAGES = {
     "error_max_budget_usd": "This request hit the spending limit.",
     "error_during_execution": "Something went wrong while processing.",
     "authentication_failed": (
-        "Claude authentication failed. "
-        "Check the auth token in the add-on settings."
+        "Claude authentication failed. Check the auth token in the add-on settings."
     ),
-    "billing_error": (
-        "Billing issue — check your account at console.anthropic.com."
-    ),
+    "billing_error": ("Billing issue — check your account at console.anthropic.com."),
     "rate_limit": "Rate limited. Please wait a moment and try again.",
     "cli_not_found": (
-        "Claude Code CLI not found in the add-on container. "
-        "Try restarting the add-on."
+        "Claude Code CLI not found in the add-on container. Try restarting the add-on."
     ),
-    "process_error": (
-        "Claude Code process crashed. Check the add-on logs."
-    ),
-    "parse_error": (
-        "Received an invalid response from Claude. Try again."
-    ),
-    "internal_error": (
-        "An unexpected error occurred in the add-on."
-    ),
+    "process_error": ("Claude Code process crashed. Check the add-on logs."),
+    "parse_error": ("Received an invalid response from Claude. Try again."),
+    "internal_error": ("An unexpected error occurred in the add-on."),
     "addon_unreachable": (
-        "Cannot reach the HA Claude Agent add-on. "
-        "Is the add-on installed and running?"
+        "Cannot reach the HA Claude Agent add-on. Is the add-on installed and running?"
     ),
 }
 
@@ -101,9 +90,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
     _attr_supports_streaming = False
     _attr_supported_features = ConversationEntityFeature.CONTROL
 
-    def __init__(
-        self, config_entry: ConfigEntry, subentry: ConfigSubentry
-    ) -> None:
+    def __init__(self, config_entry: ConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
         self.entry = config_entry
         self.subentry = subentry
@@ -139,9 +126,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
     ) -> ConversationResult:
         """Build an error ConversationResult."""
         intent_response = intent.IntentResponse(language=language)
-        intent_response.async_set_error(
-            intent.IntentResponseErrorCode.UNKNOWN, message
-        )
+        intent_response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, message)
         return ConversationResult(
             response=intent_response,
             conversation_id=chat_log.conversation_id,
@@ -152,9 +137,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         return [
             state.entity_id
             for state in self.hass.states.async_all()
-            if async_should_expose(
-                self.hass, "conversation", state.entity_id
-            )
+            if async_should_expose(self.hass, "conversation", state.entity_id)
         ]
 
     async def _async_handle_message(
@@ -172,20 +155,16 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
 
         session_id: str | None = None
         if user_input.conversation_id:
-            session_id = runtime_data.sessions.get(
-                user_input.conversation_id
-            )
+            session_id = runtime_data.sessions.get(user_input.conversation_id)
 
-        effort = self.subentry.data.get(
-            CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT
-        )
-        max_turns = int(
-            self.subentry.data.get(CONF_MAX_TURNS, DEFAULT_MAX_TURNS)
-        )
+        effort = self.subentry.data.get(CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT)
+        max_turns = int(self.subentry.data.get(CONF_MAX_TURNS, DEFAULT_MAX_TURNS))
 
         _LOGGER.info(
             "Handling message: model=%s, effort=%s, resume=%s",
-            model, effort, session_id is not None,
+            model,
+            effort,
+            session_id is not None,
         )
 
         request = QueryRequest(
@@ -206,9 +185,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             async with http_session.post(
                 f"{addon_url}/query",
                 json=request.model_dump(exclude_none=True),
-                timeout=aiohttp.ClientTimeout(
-                    total=QUERY_TIMEOUT_SECONDS
-                ),
+                timeout=aiohttp.ClientTimeout(total=QUERY_TIMEOUT_SECONDS),
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
@@ -239,15 +216,11 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 response.error_code,
                 f"Add-on error: {response.error_code}",
             )
-            return self._error_response(
-                msg, chat_log, user_input.language
-            )
+            return self._error_response(msg, chat_log, user_input.language)
 
         # ── Store session mapping ──
         if response.session_id:
-            runtime_data.sessions[chat_log.conversation_id] = (
-                response.session_id
-            )
+            runtime_data.sessions[chat_log.conversation_id] = response.session_id
 
         # ── Build HA response ──
         if result_text:
@@ -258,12 +231,8 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 )
             )
 
-        intent_response = intent.IntentResponse(
-            language=user_input.language
-        )
-        intent_response.async_set_speech(
-            result_text or "I have no response."
-        )
+        intent_response = intent.IntentResponse(language=user_input.language)
+        intent_response.async_set_speech(result_text or "I have no response.")
         return ConversationResult(
             response=intent_response,
             conversation_id=chat_log.conversation_id,

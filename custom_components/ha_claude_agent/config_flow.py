@@ -7,7 +7,6 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -94,9 +93,7 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
 
         self._discovered_host = discovery_info.config.get("host")
-        self._discovered_port = discovery_info.config.get(
-            "port", DEFAULT_ADDON_PORT
-        )
+        self._discovered_port = discovery_info.config.get("port", DEFAULT_ADDON_PORT)
 
         _LOGGER.info(
             "Discovered add-on at %s:%s",
@@ -105,9 +102,7 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
         # Check we can actually reach it
-        addon_url = (
-            f"http://{self._discovered_host}:{self._discovered_port}"
-        )
+        addon_url = f"http://{self._discovered_host}:{self._discovered_port}"
         session = async_get_clientsession(self.hass)
         try:
             async with session.get(
@@ -146,8 +141,7 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="hassio_confirm",
             description_placeholders={
                 "addon_url": (
-                    f"http://{self._discovered_host}"
-                    f":{self._discovered_port}"
+                    f"http://{self._discovered_host}:{self._discovered_port}"
                 ),
             },
         )
@@ -256,9 +250,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=self._build_schema(
-                subentry.data, subentry.title
-            ),
+            data_schema=self._build_schema(subentry.data, subentry.title),
         )
 
     @staticmethod
@@ -272,9 +264,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                 vol.Required("name", default=default_name): str,
                 vol.Optional(
                     CONF_CHAT_MODEL,
-                    default=defaults.get(
-                        CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
-                    ),
+                    default=defaults.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
                 ): SelectSelector(
                     SelectSelectorConfig(
                         options=MODELS,
@@ -283,9 +273,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                 ),
                 vol.Optional(
                     CONF_MAX_TOKENS,
-                    default=defaults.get(
-                        CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS
-                    ),
+                    default=defaults.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS),
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=1,
@@ -296,9 +284,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                 ),
                 vol.Optional(
                     CONF_TEMPERATURE,
-                    default=defaults.get(
-                        CONF_TEMPERATURE, DEFAULT_TEMPERATURE
-                    ),
+                    default=defaults.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE),
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=0.0,
@@ -309,9 +295,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                 ),
                 vol.Optional(
                     CONF_THINKING_EFFORT,
-                    default=defaults.get(
-                        CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT
-                    ),
+                    default=defaults.get(CONF_THINKING_EFFORT, DEFAULT_THINKING_EFFORT),
                 ): SelectSelector(
                     SelectSelectorConfig(
                         options=THINKING_EFFORT_OPTIONS,
@@ -320,9 +304,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                 ),
                 vol.Optional(
                     CONF_MAX_TURNS,
-                    default=defaults.get(
-                        CONF_MAX_TURNS, DEFAULT_MAX_TURNS
-                    ),
+                    default=defaults.get(CONF_MAX_TURNS, DEFAULT_MAX_TURNS),
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=1,

@@ -1,0 +1,38 @@
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+# HA stubs have quirks that produce false positives for these codes.
+# Real import errors (the main thing we want to catch) are NOT suppressed.
+disable_error_code = "arg-type, override, call-arg, typeddict-item, no-any-return"
+
+[[tool.mypy.overrides]]
+module = "claude_agent_sdk.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (catches unused imports, undefined names)
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "T20",  # flake8-print (no stray prints)
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.ha_claude_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

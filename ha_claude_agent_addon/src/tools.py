@@ -11,7 +11,6 @@ import logging
 from typing import Any
 
 from claude_agent_sdk import tool
-
 from ha_client import HAClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,16 +56,13 @@ def create_ha_tools(
 
         # Security: only allow calls on exposed entities
         if entity_id not in exposed_set:
-            _LOGGER.warning(
-                "Blocked service call on unexposed entity: %s", entity_id
-            )
+            _LOGGER.warning("Blocked service call on unexposed entity: %s", entity_id)
             return {
                 "content": [
                     {
                         "type": "text",
                         "text": (
-                            f"Entity {entity_id} is not exposed "
-                            "to conversation agents."
+                            f"Entity {entity_id} is not exposed to conversation agents."
                         ),
                     }
                 ],
@@ -105,19 +101,19 @@ def create_ha_tools(
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Service call %s.%s failed for %s: %s",
-                domain, service, entity_id, err,
+                domain,
+                service,
+                entity_id,
+                err,
             )
             return {
-                "content": [
-                    {"type": "text", "text": f"Error calling service: {err}"}
-                ],
+                "content": [{"type": "text", "text": f"Error calling service: {err}"}],
                 "is_error": True,
             }
 
     @tool(
         "get_entity_state",
-        "Get the current state and attributes of a "
-        "Home Assistant entity.",
+        "Get the current state and attributes of a Home Assistant entity.",
         {"entity_id": str},
     )
     async def get_entity_state(args: dict[str, Any]) -> dict[str, Any]:
@@ -143,11 +139,7 @@ def create_ha_tools(
             "friendly_name": attrs.pop("friendly_name", entity_id),
             "attributes": attrs,
         }
-        return {
-            "content": [
-                {"type": "text", "text": json.dumps(info, default=str)}
-            ]
-        }
+        return {"content": [{"type": "text", "text": json.dumps(info, default=str)}]}
 
     @tool(
         "list_entities",
@@ -158,9 +150,7 @@ def create_ha_tools(
     )
     async def list_entities(args: dict[str, Any]) -> dict[str, Any]:
         domain_filter = args.get("domain", "")
-        _LOGGER.debug(
-            "list_entities: domain_filter=%s", domain_filter or "(all)"
-        )
+        _LOGGER.debug("list_entities: domain_filter=%s", domain_filter or "(all)")
 
         all_states = await ha_client.get_states()
         entities = []
@@ -171,17 +161,13 @@ def create_ha_tools(
             entities.append(
                 {
                     "entity_id": eid,
-                    "name": state.get("attributes", {}).get(
-                        "friendly_name", eid
-                    ),
+                    "name": state.get("attributes", {}).get("friendly_name", eid),
                     "state": state["state"],
                 }
             )
 
         return {
-            "content": [
-                {"type": "text", "text": json.dumps(entities, default=str)}
-            ]
+            "content": [{"type": "text", "text": json.dumps(entities, default=str)}]
         }
 
     return [call_service, get_entity_state, list_entities]

@@ -32,9 +32,7 @@ class HAClient:
                 self._session = aiohttp.ClientSession(headers=self._headers)
             return self._session
 
-    async def call_service(
-        self, domain: str, service: str, data: dict
-    ) -> list[dict]:
+    async def call_service(self, domain: str, service: str, data: dict) -> list[dict]:
         """POST /api/services/{domain}/{service}."""
         session = await self._get_session()
         url = f"{self._base_url}/api/services/{domain}/{service}"

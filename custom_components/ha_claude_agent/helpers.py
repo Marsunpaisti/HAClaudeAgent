@@ -29,13 +29,9 @@ def build_system_prompt(
         if not async_should_expose(hass, "conversation", state.entity_id):
             continue
         name = state.attributes.get("friendly_name", state.entity_id)
-        entity_lines.append(
-            f"- {state.entity_id}: {name} (state: {state.state})"
-        )
+        entity_lines.append(f"- {state.entity_id}: {name} (state: {state.state})")
 
-    entity_section = (
-        "\n".join(entity_lines) if entity_lines else "(none exposed)"
-    )
+    entity_section = "\n".join(entity_lines) if entity_lines else "(none exposed)"
 
     return f"""\
 {user_prompt}

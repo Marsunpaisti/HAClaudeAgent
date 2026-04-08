@@ -7,7 +7,6 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -72,24 +71,16 @@ async def async_setup_entry(
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
-                raise ConfigEntryNotReady(
-                    f"Add-on returned status {resp.status}"
-                )
+                raise ConfigEntryNotReady(f"Add-on returned status {resp.status}")
     except (aiohttp.ClientError, TimeoutError) as err:
-        raise ConfigEntryNotReady(
-            f"Cannot reach add-on at {addon_url}: {err}"
-        ) from err
+        raise ConfigEntryNotReady(f"Cannot reach add-on at {addon_url}: {err}") from err
 
     entry.runtime_data = HAClaudeAgentRuntimeData(addon_url=addon_url)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info(
         "HA Claude Agent set up with %d conversation subentries",
-        sum(
-            1
-            for s in entry.subentries.values()
-            if s.subentry_type == "conversation"
-        ),
+        sum(1 for s in entry.subentries.values() if s.subentry_type == "conversation"),
     )
     return True
 
