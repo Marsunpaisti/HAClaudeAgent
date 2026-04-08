@@ -1,22 +1,28 @@
 {
   "config": {
     "step": {
+      "hassio_confirm": {
+        "title": "Discovered HA Claude Agent Add-on",
+        "description": "The HA Claude Agent add-on was found at {addon_url}. Click submit to set up the integration."
+      },
       "user": {
         "title": "Set up HA Claude Agent",
-        "description": "Enter your Anthropic API key to get started.",
+        "description": "Enter the add-on connection details. The defaults work for HAOS installations.",
         "data": {
-          "api_key": "API Key",
-          "cli_path": "Claude CLI path (optional)"
+          "addon_host": "Add-on host",
+          "addon_port": "Add-on port"
         },
         "data_description": {
-          "api_key": "Your Anthropic API key from console.anthropic.com.",
-          "cli_path": "Path to the 'claude' CLI binary. Leave empty to use the default."
+          "addon_host": "Hostname or IP of the HA Claude Agent add-on container.",
+          "addon_port": "Port the add-on HTTP server listens on."
         }
       }
     },
+    "abort": {
+      "cannot_connect": "Cannot reach the add-on. Is it installed and running?"
+    },
     "error": {
-      "invalid_auth": "API key is required.",
-      "cannot_connect": "Failed to connect to the Claude Agent SDK.",
+      "cannot_connect": "Cannot reach the add-on at this address. Is it installed and running?",
       "unknown": "An unexpected error occurred."
     }
   },
