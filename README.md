@@ -1,6 +1,6 @@
 # HA Claude Agent
 
-A Home Assistant custom component that adds a conversation agent powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-and-tools/claude-agent-sdk). Talk to Claude from your HA dashboard and let it control your smart home devices.
+A Home Assistant custom component that adds a conversation agent powered by Claude, with a companion add-on that runs the Claude Code CLI.
 
 ## Features
 
@@ -8,36 +8,33 @@ A Home Assistant custom component that adds a conversation agent powered by the 
 - Controls exposed devices via MCP tools (`call_service`, `get_entity_state`, `list_entities`)
 - Multi-turn conversation with session persistence
 - Configurable model, system prompt, thinking effort, temperature, and max tokens
-- Multiple agents per API key via ConfigSubentry
+- Multiple agents per integration via ConfigSubentry
 - Security: only entities explicitly exposed to conversation agents can be controlled
 
 ## Prerequisites
 
-- Home Assistant 2025.4+
-- An Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
-- Node.js installed in the HA environment
-- Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
+- Home Assistant OS (HAOS) or Supervised installation
+- An Anthropic API key or Claude Code OAuth token
 
 ## Installation
 
-### HACS (recommended)
+Two components need to be installed: the **integration** (HACS) and the **add-on**.
+
+### 1. Add-on
+
+1. Go to **Settings > Add-ons > Add-on Store**
+2. Click **⋮ > Repositories**
+3. Paste `https://github.com/Marsunpaisti/HAClaudeAgent` and click **Add**
+4. Find "HA Claude Agent" in the store and click **Install**
+5. In the add-on **Configuration** tab, enter your `auth_token` (Anthropic API key or OAuth token)
+6. Start the add-on
+
+### 2. Integration (HACS)
 
 1. Add this repository as a custom repository in HACS
 2. Install "HA Claude Agent"
 3. Restart Home Assistant
-
-### Manual
-
-1. Copy `custom_components/ha_claude_agent` to your HA `config/custom_components/` directory
-2. Restart Home Assistant
-
-## Setup
-
-1. Go to **Settings > Devices & Services > Add Integration**
-2. Search for **HA Claude Agent**
-3. Enter your Anthropic API key
-4. Optionally set the path to the `claude` CLI binary (leave empty for default)
-5. A default "Claude Agent" is created automatically
+4. The integration should auto-discover the add-on. If not, go to **Settings > Devices & Services > Add Integration** and search for **HA Claude Agent**
 
 ## Configuration
 
@@ -76,13 +73,29 @@ Example commands:
 
 ## How It Works
 
-The integration uses the Claude Agent SDK to run Claude as an agent with custom MCP tools:
+The system has two parts:
 
-- **`call_service`** — calls any HA service on an exposed entity
-- **`get_entity_state`** — reads the current state and attributes of an entity
-- **`list_entities`** — lists available entities, optionally filtered by domain
+- **Integration** (HACS custom component) — registers as a HA conversation agent, builds system prompts with exposed entities, and delegates queries to the add-on via HTTP
+- **Add-on** (Docker container) — runs the Claude Code CLI + Claude Agent SDK, exposes an HTTP API, and proxies HA service calls via MCP tools
 
 The system prompt is rebuilt on every turn with current entity states, so Claude always has up-to-date information. Session IDs from the SDK are mapped to HA conversation IDs for multi-turn context.
+
+## Development
+
+```bash
+pip install -r requirements_dev.txt
+```
+
+### Verification
+
+```bash
+ruff check custom_components/ ha_claude_agent_addon/src/ tests/
+ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
+pytest tests/ -v
+```
+
+These checks run automatically in CI on every push and PR.
 
 ## License
 

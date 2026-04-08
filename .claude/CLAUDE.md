@@ -28,6 +28,7 @@ custom_components/ha_claude_agent/
   config_flow.py       — ConfigFlow (add-on URL) + ConfigSubentryFlow (agent settings)
   const.py             — all constants and defaults
   helpers.py           — system prompt builder with exposed entities
+  models.py            — shared Pydantic request/response models
   manifest.json        — integration manifest (no external requirements)
   strings.json         — UI string keys
   translations/en.json — English translations
@@ -36,10 +37,12 @@ custom_components/ha_claude_agent/
 ha_claude_agent_addon/
   config.yaml          — add-on metadata and options schema
   Dockerfile           — Python + Node.js + Claude CLI container
-  requirements.txt     — Python dependencies (claude-agent-sdk, aiohttp)
+  build.yaml           — per-architecture base image for Docker build
+  requirements.txt     — Python dependencies (claude-agent-sdk, fastapi, etc.)
   src/
-    server.py          — HTTP API server with /query endpoint
+    server.py          — FastAPI server with /query endpoint
     ha_client.py       — HA REST API client using SUPERVISOR_TOKEN
+    models.py          — shared Pydantic models (identical copy of integration's)
     tools.py           — MCP tools proxying to HA REST API
   rootfs/              — s6-overlay service scripts
   translations/en.yaml — add-on UI strings
@@ -60,7 +63,27 @@ ha_claude_agent_addon/
 pip install -r requirements_dev.txt
 ```
 
-Requires:
-- Python 3.12+
+### Verification
+
+Run all checks (lint, format, type check, tests):
+
+```bash
+ruff check custom_components/ ha_claude_agent_addon/src/ tests/
+ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
+pytest tests/ -v
+```
+
+Auto-fix lint and formatting issues:
+
+```bash
+ruff check --fix custom_components/ ha_claude_agent_addon/src/ tests/
+ruff format custom_components/ ha_claude_agent_addon/src/ tests/
+```
+
+These same checks run in GitHub Actions CI on every push to `main` and on PRs.
+
+### Requirements
+- Python 3.13+
 - Home Assistant 2025.4+
 - The HA Claude Agent add-on running (for end-to-end testing)
