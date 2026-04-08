@@ -1,2 +1,6 @@
 homeassistant
 voluptuous
+claude_agent_sdk
+pydantic
+fastapi
+pytest
