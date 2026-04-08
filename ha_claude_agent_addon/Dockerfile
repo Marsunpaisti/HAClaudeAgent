@@ -9,7 +9,7 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Install Python dependencies
 COPY requirements.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Copy application source
 COPY src/ /app/
