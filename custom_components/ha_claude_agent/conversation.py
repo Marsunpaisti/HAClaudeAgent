@@ -14,6 +14,8 @@ from homeassistant.components.conversation import (
     ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
+)
+from homeassistant.components.homeassistant.exposed_entities import (
     async_should_expose,
 )
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
