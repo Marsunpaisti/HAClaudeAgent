@@ -143,6 +143,7 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             max_turns=body.max_turns,
             env=auth_env,
             permission_mode="dontAsk",
+            effort=body.effort,
             stderr=lambda line: _LOGGER.debug("CLI stderr: %s", line),
         )
 
