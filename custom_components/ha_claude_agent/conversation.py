@@ -36,6 +36,7 @@ from .const import (
     QUERY_TIMEOUT_SECONDS,
 )
 from .helpers import build_system_prompt
+from .models import QueryRequest, QueryResponse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -185,15 +186,15 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             model, effort, session_id is not None,
         )
 
-        payload = {
-            "prompt": user_input.text,
-            "model": model,
-            "system_prompt": system_prompt,
-            "max_turns": max_turns,
-            "effort": effort,
-            "session_id": session_id,
-            "exposed_entities": self._get_exposed_entity_ids(),
-        }
+        request = QueryRequest(
+            prompt=user_input.text,
+            model=model,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            effort=effort,
+            session_id=session_id,
+            exposed_entities=self._get_exposed_entity_ids(),
+        )
 
         # ── Call the add-on ──
         addon_url = runtime_data.addon_url
@@ -202,7 +203,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         try:
             async with http_session.post(
                 f"{addon_url}/query",
-                json=payload,
+                json=request.model_dump(exclude_none=True),
                 timeout=aiohttp.ClientTimeout(
                     total=QUERY_TIMEOUT_SECONDS
                 ),
@@ -217,31 +218,32 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             )
 
         # ── Process response ──
-        error_code = data.get("error_code")
-        result_text = data.get("result_text") or ""
-        new_session_id = data.get("session_id")
+        response = QueryResponse.model_validate(data)
 
         _LOGGER.info(
             "Add-on response: error=%s, session=%s, cost=$%s, turns=%s",
-            error_code,
-            new_session_id,
-            data.get("cost_usd"),
-            data.get("num_turns"),
+            response.error_code,
+            response.session_id,
+            response.cost_usd,
+            response.num_turns,
         )
 
+        result_text = response.result_text or ""
+
         # If error with no result text, show a user-friendly message
-        if error_code and not result_text:
+        if response.error_code and not result_text:
             msg = _ERROR_MESSAGES.get(
-                error_code, f"Add-on error: {error_code}"
+                response.error_code,
+                f"Add-on error: {response.error_code}",
             )
             return self._error_response(
                 msg, chat_log, user_input.language
             )
 
         # ── Store session mapping ──
-        if new_session_id:
+        if response.session_id:
             runtime_data.sessions[chat_log.conversation_id] = (
-                new_session_id
+                response.session_id
             )
 
         # ── Build HA response ──
