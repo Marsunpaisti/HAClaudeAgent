@@ -12,24 +12,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v6
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements_dev.txt
+        run: uv sync
 
       - name: Ruff lint
-        run: ruff check custom_components/ ha_claude_agent_addon/src/ tests/
+        run: uv run ruff check custom_components/ ha_claude_agent_addon/src/ tests/
 
       - name: Ruff format check
-        run: ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+        run: uv run ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
 
       - name: Mypy (integration)
-        run: mypy custom_components/ha_claude_agent/
+        run: uv run mypy custom_components/ha_claude_agent/
 
       - name: Mypy (add-on)
-        run: mypy ha_claude_agent_addon/src/
+        run: uv run mypy ha_claude_agent_addon/src/
 
       - name: Pytest
-        run: pytest tests/ -v
+        run: uv run pytest tests/ -v

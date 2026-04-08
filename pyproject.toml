@@ -1,3 +1,21 @@
+[project]
+name = "ha-claude-agent"
+version = "0.4.8"
+requires-python = ">=3.13"
+# Dev/CI dependencies — NOT the add-on runtime deps.
+# The add-on has its own requirements.txt (pinned via uv export
+# from ha_claude_agent_addon/pyproject.toml).
+dependencies = [
+    "homeassistant>=2025.4.0",
+    "voluptuous",
+    "pydantic>=2.0.0",
+    "pytest",
+    "mypy",
+    "ruff",
+    "claude-agent-sdk>=0.1.56",
+    "fastapi>=0.135.0",
+]
+
 [tool.mypy]
 python_version = "3.13"
 warn_return_any = false

@@ -82,17 +82,19 @@ The system prompt is rebuilt on every turn with current entity states, so Claude
 
 ## Development
 
+Requires [uv](https://docs.astral.sh/uv/) for dependency management.
+
 ```bash
-pip install -r requirements_dev.txt
+uv sync
 ```
 
 ### Verification
 
 ```bash
-ruff check custom_components/ ha_claude_agent_addon/src/ tests/
-ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
-mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
-pytest tests/ -v
+uv run ruff check custom_components/ ha_claude_agent_addon/src/ tests/
+uv run ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+uv run mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
+uv run pytest tests/ -v
 ```
 
 These checks run automatically in CI on every push and PR.

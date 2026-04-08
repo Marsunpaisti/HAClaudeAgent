@@ -1,0 +1,13 @@
+[project]
+name = "ha-claude-agent-addon"
+version = "0.4.8"
+requires-python = ">=3.13"
+# Add-on runtime dependencies.
+# Generate pinned requirements.txt: uv export --no-hashes -o requirements.txt
+dependencies = [
+    "claude-agent-sdk>=0.1.56",
+    "aiohttp>=3.13.0",
+    "fastapi>=0.135.0",
+    "uvicorn[standard]>=0.44.0",
+    "pydantic>=2.0.0",
+]

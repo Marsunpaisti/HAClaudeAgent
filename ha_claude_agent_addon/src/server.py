@@ -15,9 +15,10 @@ from contextlib import asynccontextmanager
 import uvicorn
 from claude_agent_sdk import (
     AssistantMessage,
-    ClaudeAgentOptions,
+    CLIConnectionError,
     CLIJSONDecodeError,
     CLINotFoundError,
+    ClaudeAgentOptions,
     ProcessError,
     ResultMessage,
     SystemMessage,
@@ -69,6 +70,11 @@ async def lifespan(app: FastAPI):
     addon_options = _read_addon_options()
     auth_token = addon_options.get("auth_token", "")
     app.state.auth_env = _build_auth_env(auth_token)
+    if app.state.auth_env:
+        env_key = next(iter(app.state.auth_env))
+        _LOGGER.info("Auth configured: %s=%s...%s", env_key, auth_token[:7], auth_token[-4:])
+    else:
+        _LOGGER.warning("No auth_token configured — queries will fail")
 
     supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
     if not supervisor_token:
@@ -137,7 +143,7 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             max_turns=body.max_turns,
             env=auth_env,
             permission_mode="dontAsk",
-            effort=body.effort,
+            stderr=lambda line: _LOGGER.debug("CLI stderr: %s", line),
         )
 
         if body.session_id:
@@ -212,6 +218,16 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             ),
         )
 
+    except CLIConnectionError as err:
+        _LOGGER.error("CLI connection error: %s", err)
+        return QueryResponse(
+            error_code="cli_connection_error",
+            result_text=(
+                "Could not connect to Claude Code CLI. "
+                "Check the add-on logs for details."
+            ),
+        )
+
     except CLIJSONDecodeError as err:
         _LOGGER.error("Failed to parse CLI response: %s", err)
         return QueryResponse(
@@ -219,11 +235,11 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             result_text="Received an invalid response from Claude Code.",
         )
 
-    except Exception:
+    except Exception as err:
         _LOGGER.exception("Unexpected error during query")
         return QueryResponse(
             error_code="internal_error",
-            result_text="An unexpected error occurred in the add-on.",
+            result_text=f"An unexpected error occurred in the add-on: {err}",
         )
 
     return QueryResponse(

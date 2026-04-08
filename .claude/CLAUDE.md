@@ -59,31 +59,42 @@ ha_claude_agent_addon/
 
 ## Development
 
+Uses `uv` for dependency management. Two lockfiles:
+- `uv.lock` (repo root) — dev environment (HA, linters, type checker)
+- `ha_claude_agent_addon/uv.lock` — add-on runtime (SDK, FastAPI, etc.)
+
 ```bash
-pip install -r requirements_dev.txt
+uv sync          # install dev dependencies
 ```
 
 ### Verification
 
-Run all checks (lint, format, type check, tests):
-
 ```bash
-ruff check custom_components/ ha_claude_agent_addon/src/ tests/
-ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
-mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
-pytest tests/ -v
+uv run ruff check custom_components/ ha_claude_agent_addon/src/ tests/
+uv run ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+uv run mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
+uv run pytest tests/ -v
 ```
 
-Auto-fix lint and formatting issues:
+Auto-fix lint and formatting:
 
 ```bash
-ruff check --fix custom_components/ ha_claude_agent_addon/src/ tests/
-ruff format custom_components/ ha_claude_agent_addon/src/ tests/
+uv run ruff check --fix custom_components/ ha_claude_agent_addon/src/ tests/
+uv run ruff format custom_components/ ha_claude_agent_addon/src/ tests/
 ```
 
-These same checks run in GitHub Actions CI on every push to `main` and on PRs.
+### Updating add-on dependencies
+
+Edit `ha_claude_agent_addon/pyproject.toml`, then regenerate the pinned requirements:
+
+```bash
+cd ha_claude_agent_addon && uv lock && uv export --no-hashes --no-emit-project -o requirements.txt
+```
+
+The Dockerfile uses `requirements.txt` (exact pins from the lockfile), so every build gets identical packages.
 
 ### Requirements
 - Python 3.13+
+- [uv](https://docs.astral.sh/uv/) for dependency management
 - Home Assistant 2025.4+
 - The HA Claude Agent add-on running (for end-to-end testing)
