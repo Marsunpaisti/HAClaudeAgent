@@ -144,7 +144,7 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             env=auth_env,
             permission_mode="dontAsk",
             effort=body.effort,
-            stderr=lambda line: _LOGGER.debug("CLI stderr: %s", line),
+            stderr=lambda line: _LOGGER.warning("CLI stderr: %s", line),
         )
 
         if body.session_id:
