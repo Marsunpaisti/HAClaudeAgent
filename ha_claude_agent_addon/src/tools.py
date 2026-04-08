@@ -120,6 +120,20 @@ def create_ha_tools(
         entity_id = args["entity_id"]
         _LOGGER.debug("get_entity_state: %s", entity_id)
 
+        if entity_id not in exposed_set:
+            _LOGGER.warning("Blocked state read on unexposed entity: %s", entity_id)
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Entity {entity_id} is not exposed to conversation agents."
+                        ),
+                    }
+                ],
+                "is_error": True,
+            }
+
         state = await ha_client.get_state(entity_id)
         if state is None:
             return {
@@ -156,6 +170,8 @@ def create_ha_tools(
         entities = []
         for state in all_states:
             eid = state["entity_id"]
+            if eid not in exposed_set:
+                continue
             if domain_filter and not eid.startswith(f"{domain_filter}."):
                 continue
             entities.append(

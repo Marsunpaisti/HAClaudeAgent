@@ -12,13 +12,13 @@ from pydantic import BaseModel, Field
 class QueryRequest(BaseModel):
     """Request body for POST /query."""
 
-    prompt: str
-    model: str
-    system_prompt: str
-    max_turns: int = 10
-    effort: str = "medium"
-    session_id: str | None = None
-    exposed_entities: list[str] = Field(default_factory=list)
+    prompt: str = Field(max_length=3_000)
+    model: str = Field(max_length=200)
+    system_prompt: str = Field(max_length=20_000)
+    max_turns: int = Field(default=10, ge=1, le=100)
+    effort: str = Field(default="medium", max_length=20)
+    session_id: str | None = Field(default=None, max_length=200)
+    exposed_entities: list[str] = Field(default_factory=list, max_length=1_000)
 
 
 class QueryResponse(BaseModel):

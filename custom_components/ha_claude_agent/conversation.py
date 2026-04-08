@@ -151,7 +151,9 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         # ── Build request payload ──
         model = self.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         user_prompt = self.subentry.data.get(CONF_PROMPT, DEFAULT_PROMPT)
-        system_prompt = build_system_prompt(self.hass, user_prompt)
+        system_prompt = build_system_prompt(
+            self.hass, user_prompt, location=runtime_data.location
+        )
 
         session_id: str | None = None
         if user_input.conversation_id:

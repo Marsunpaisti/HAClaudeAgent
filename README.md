@@ -40,14 +40,14 @@ Two components need to be installed: the **integration** (HACS) and the **add-on
 
 Each conversation agent (subentry) has its own settings:
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| **Model** | `claude-haiku-4-5-20251001` | Claude model to use. Options: `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6` |
-| **Max output tokens** | `1024` | Maximum tokens in the response |
-| **Temperature** | `1.0` | Controls randomness (0.0 = focused, 2.0 = creative) |
-| **Thinking effort** | `medium` | Reasoning depth: `low`, `medium`, `high`, `max` |
-| **Max tool turns** | `10` | Maximum tool-use round trips per conversation turn |
-| **System prompt** | *(default)* | Custom instructions appended to the HA context |
+| Option                | Default                     | Description                                                                                       |
+| --------------------- | --------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Model**             | `claude-haiku-4-5-20251001` | Claude model to use. Options: `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`, `claude-opus-4-6` |
+| **Max output tokens** | `2048`                      | Maximum tokens in the response                                                                    |
+| **Temperature**       | `1.0`                       | Controls randomness (0.0 = focused, 2.0 = creative)                                               |
+| **Thinking effort**   | `medium`                    | Reasoning depth: `low`, `medium`, `high`, `max`                                                   |
+| **Max tool turns**    | `10`                        | Maximum tool-use round trips per conversation turn                                                |
+| **System prompt**     | _(default)_                 | Custom instructions appended to the HA context                                                    |
 
 To add another agent: go to the integration page and click "Add conversation agent". Each agent can have different models and settings.
 
@@ -66,6 +66,7 @@ The agent can only see and control entities you explicitly expose:
 3. Use the conversation panel (chat bubble) to talk to it
 
 Example commands:
+
 - "Turn on the living room lights"
 - "What's the temperature in the bedroom?"
 - "Set the thermostat to 72 degrees"

@@ -21,6 +21,7 @@ from .const import (
     DEFAULT_ADDON_PORT,
     DOMAIN,
 )
+from .helpers import async_reverse_geocode
 
 PLATFORMS = [Platform.CONVERSATION]
 
@@ -46,6 +47,7 @@ class HAClaudeAgentRuntimeData:
     """Runtime data for the HA Claude Agent integration."""
 
     addon_url: str
+    location: str | None = None
     sessions: BoundedSessionMap = field(default_factory=BoundedSessionMap)
 
 
@@ -75,7 +77,19 @@ async def async_setup_entry(
     except (aiohttp.ClientError, TimeoutError) as err:
         raise ConfigEntryNotReady(f"Cannot reach add-on at {addon_url}: {err}") from err
 
-    entry.runtime_data = HAClaudeAgentRuntimeData(addon_url=addon_url)
+    # Reverse-geocode home location (best-effort, non-blocking)
+    location: str | None = None
+    lat, lon = hass.config.latitude, hass.config.longitude
+    if lat or lon:
+        location = await async_reverse_geocode(session, lat, lon)
+        if location:
+            _LOGGER.info("Resolved home location: %s", location)
+        else:
+            _LOGGER.debug("Reverse geocoding returned no result")
+
+    entry.runtime_data = HAClaudeAgentRuntimeData(
+        addon_url=addon_url, location=location
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info(
