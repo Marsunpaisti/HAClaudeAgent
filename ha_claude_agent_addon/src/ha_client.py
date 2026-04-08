@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import aiohttp
@@ -23,11 +24,13 @@ class HAClient:
             "Content-Type": "application/json",
         }
         self._session: aiohttp.ClientSession | None = None
+        self._lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers=self._headers)
-        return self._session
+        async with self._lock:
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession(headers=self._headers)
+            return self._session
 
     async def call_service(
         self, domain: str, service: str, data: dict

@@ -39,12 +39,17 @@ _LOGGER = logging.getLogger(__name__)
 MCP_SERVER_NAME = "homeassistant"
 ADDON_OPTIONS_PATH = "/data/options.json"
 DEFAULT_PORT = 8099
+API_VERSION = 1
 
 
 def _read_addon_options() -> dict:
     """Read add-on options from /data/options.json."""
-    with open(ADDON_OPTIONS_PATH) as f:
-        return json.load(f)
+    try:
+        with open(ADDON_OPTIONS_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as err:
+        _LOGGER.error("Cannot read add-on options: %s", err)
+        return {}
 
 
 def _build_auth_env(auth_token: str) -> dict[str, str]:
@@ -58,17 +63,23 @@ def _build_auth_env(auth_token: str) -> dict[str, str]:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """GET /health — simple liveness check."""
-    return web.json_response({"status": "ok"})
+    """GET /health — liveness check with API version."""
+    return web.json_response({"status": "ok", "api_version": API_VERSION})
 
 
 async def handle_query(request: web.Request) -> web.Response:
     """POST /query — run a Claude Agent SDK query and return the result."""
-    data = await request.json()
+    try:
+        data = await request.json()
+        prompt: str = data["prompt"]
+        model: str = data["model"]
+        system_prompt: str = data["system_prompt"]
+    except (json.JSONDecodeError, KeyError) as err:
+        return web.json_response(
+            {"error_code": "bad_request", "result_text": f"Invalid request: {err}"},
+            status=400,
+        )
 
-    prompt: str = data["prompt"]
-    model: str = data["model"]
-    system_prompt: str = data["system_prompt"]
     max_turns: int = data.get("max_turns", 10)
     effort: str = data.get("effort", "medium")
     session_id: str | None = data.get("session_id")
@@ -79,15 +90,9 @@ async def handle_query(request: web.Request) -> web.Response:
         model, effort, max_turns, session_id is not None,
     )
 
-    # ── Auth ──
-    addon_options = _read_addon_options()
-    auth_token = addon_options.get("auth_token", "")
-    env = _build_auth_env(auth_token)
-
-    # ── HA client + MCP tools ──
-    supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
-    supervisor_url = "http://supervisor/core"
-    ha_client = HAClient(base_url=supervisor_url, token=supervisor_token)
+    # ── Auth + HA client from app state (created once at startup) ──
+    auth_env: dict[str, str] = request.app["auth_env"]
+    ha_client: HAClient = request.app["ha_client"]
 
     try:
         mcp_tools = create_ha_tools(ha_client, exposed_entities)
@@ -114,7 +119,7 @@ async def handle_query(request: web.Request) -> web.Response:
             tools=allowed_tools,
             allowed_tools=allowed_tools,
             max_turns=max_turns,
-            env=env,
+            env=auth_env,
             permission_mode="dontAsk",
             effort=effort,
         )
@@ -171,6 +176,7 @@ async def handle_query(request: web.Request) -> web.Response:
 
         # Fall back to accumulated text if no result message text
         if not result_text and text_parts:
+            _LOGGER.warning("No ResultMessage text, falling back to accumulated text blocks")
             result_text = "\n\n".join(text_parts)
 
         # If only an assistant-level error and no text, surface it
@@ -215,9 +221,6 @@ async def handle_query(request: web.Request) -> web.Response:
         cost_usd = None
         num_turns = None
 
-    finally:
-        await ha_client.close()
-
     return web.json_response(
         {
             "result_text": result_text or None,
@@ -229,11 +232,43 @@ async def handle_query(request: web.Request) -> web.Response:
     )
 
 
+async def on_startup(app: web.Application) -> None:
+    """Initialize shared resources at startup."""
+    # Read auth token once
+    addon_options = _read_addon_options()
+    auth_token = addon_options.get("auth_token", "")
+    app["auth_env"] = _build_auth_env(auth_token)
+
+    # Validate SUPERVISOR_TOKEN is available
+    supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+    if not supervisor_token:
+        _LOGGER.error(
+            "SUPERVISOR_TOKEN not set — HA REST API calls will fail. "
+            "Is the add-on running inside the Supervisor?"
+        )
+        supervisor_token = ""
+
+    # Create shared HA client (reused across requests)
+    app["ha_client"] = HAClient(
+        base_url="http://supervisor/core",
+        token=supervisor_token,
+    )
+
+
+async def on_cleanup(app: web.Application) -> None:
+    """Clean up shared resources on shutdown."""
+    ha_client: HAClient | None = app.get("ha_client")
+    if ha_client:
+        await ha_client.close()
+
+
 def create_app() -> web.Application:
     """Create and return the aiohttp application."""
-    app = web.Application()
+    app = web.Application(client_max_size=1024 * 1024)  # 1MB max request
     app.router.add_get("/health", handle_health)
     app.router.add_post("/query", handle_query)
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
     return app
 
 

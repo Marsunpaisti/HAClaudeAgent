@@ -89,6 +89,10 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
         The add-on publishes its host/port to the Supervisor discovery
         service on startup. This step receives that info automatically.
         """
+        # Prevent duplicate entries from re-discovery
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
+
         self._discovered_host = discovery_info.config.get("host")
         self._discovered_port = discovery_info.config.get(
             "port", DEFAULT_ADDON_PORT
@@ -156,7 +160,7 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             host = user_input[CONF_ADDON_HOST]
-            port = int(user_input[CONF_ADDON_PORT])
+            port = int(user_input.get(CONF_ADDON_PORT, DEFAULT_ADDON_PORT))
 
             # Validate connectivity
             addon_url = f"http://{host}:{port}"
@@ -196,7 +200,14 @@ class HAClaudeAgentConfigFlow(ConfigFlow, domain=DOMAIN):
                     ): TextSelector(TextSelectorConfig()),
                     vol.Required(
                         CONF_ADDON_PORT, default=DEFAULT_ADDON_PORT
-                    ): int,
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=65535,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
                 }
             ),
             errors=errors,

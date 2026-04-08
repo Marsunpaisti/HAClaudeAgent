@@ -77,7 +77,12 @@ def create_ha_tools(
         try:
             extra_data = json.loads(raw_data) if raw_data else {}
         except json.JSONDecodeError:
-            extra_data = {}
+            return {
+                "content": [
+                    {"type": "text", "text": "service_data must be valid JSON."}
+                ],
+                "is_error": True,
+            }
 
         service_data = {"entity_id": entity_id, **extra_data}
 

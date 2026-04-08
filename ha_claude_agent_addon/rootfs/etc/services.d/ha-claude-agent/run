@@ -2,12 +2,15 @@
 
 PORT=8099
 
+# Get the add-on's IP address (stable within the Supervisor network)
+ADDON_IP=$(bashio::addon.ip_address 2>/dev/null || hostname -i 2>/dev/null || hostname)
+
 # Publish discovery so the integration can auto-detect us
-bashio::log.info "Publishing discovery for ha_claude_agent..."
+bashio::log.info "Publishing discovery for ha_claude_agent at ${ADDON_IP}:${PORT}..."
 curl -s -X POST \
   -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d "{\"service\": \"ha_claude_agent\", \"config\": {\"host\": \"$(hostname)\", \"port\": ${PORT}}}" \
+  -d "{\"service\": \"ha_claude_agent\", \"config\": {\"host\": \"${ADDON_IP}\", \"port\": ${PORT}}}" \
   http://supervisor/discovery || bashio::log.warning "Discovery publish failed (non-fatal)"
 
 bashio::log.info "Starting HA Claude Agent server on port ${PORT}..."
