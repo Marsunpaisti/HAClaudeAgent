@@ -101,19 +101,19 @@ async def health():
 
 
 @app.post("/query", response_model=QueryResponse)
-async def handle_query(request: QueryRequest) -> QueryResponse:
+async def handle_query(body: QueryRequest) -> QueryResponse:
     """Run a Claude Agent SDK query and return the result."""
     _LOGGER.info(
         "Query: model=%s, effort=%s, max_turns=%d, resume=%s",
-        request.model, request.effort, request.max_turns,
-        request.session_id is not None,
+        body.model, body.effort, body.max_turns,
+        body.session_id is not None,
     )
 
     auth_env: dict[str, str] = app.state.auth_env
     ha_client: HAClient = app.state.ha_client
 
     try:
-        mcp_tools = create_ha_tools(ha_client, request.exposed_entities)
+        mcp_tools = create_ha_tools(ha_client, body.exposed_entities)
         mcp_server = create_sdk_mcp_server(
             name=MCP_SERVER_NAME,
             version="1.0.0",
@@ -130,19 +130,19 @@ async def handle_query(request: QueryRequest) -> QueryResponse:
         ]
 
         options = ClaudeAgentOptions(
-            model=request.model,
-            system_prompt=request.system_prompt,
+            model=body.model,
+            system_prompt=body.system_prompt,
             mcp_servers={MCP_SERVER_NAME: mcp_server},
             tools=allowed_tools,
             allowed_tools=allowed_tools,
-            max_turns=request.max_turns,
+            max_turns=body.max_turns,
             env=auth_env,
             permission_mode="dontAsk",
-            effort=request.effort,
+            effort=body.effort,
         )
 
-        if request.session_id:
-            options.resume = request.session_id
+        if body.session_id:
+            options.resume = body.session_id
 
         new_session_id: str | None = None
         text_parts: list[str] = []
@@ -151,7 +151,7 @@ async def handle_query(request: QueryRequest) -> QueryResponse:
         cost_usd: float | None = None
         num_turns: int | None = None
 
-        async for message in query(prompt=request.prompt, options=options):
+        async for message in query(prompt=body.prompt, options=options):
             if (
                 isinstance(message, SystemMessage)
                 and message.subtype == "init"

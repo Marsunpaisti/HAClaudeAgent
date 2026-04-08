@@ -12,6 +12,9 @@ def test_models_files_are_identical():
 
     assert integration.exists(), f"Missing: {integration}"
     assert addon.exists(), f"Missing: {addon}"
-    assert integration.read_text(encoding="utf-8") == addon.read_text(encoding="utf-8"), (
+    # Normalize line endings to handle CRLF vs LF differences (Windows/Linux)
+    integration_text = integration.read_text(encoding="utf-8").replace("\r\n", "\n")
+    addon_text = addon.read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert integration_text == addon_text, (
         "models.py files have diverged — edit one, copy to the other"
     )

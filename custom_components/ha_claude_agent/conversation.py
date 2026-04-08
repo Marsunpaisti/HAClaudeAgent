@@ -208,6 +208,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     total=QUERY_TIMEOUT_SECONDS
                 ),
             ) as resp:
+                resp.raise_for_status()
                 data = await resp.json()
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error("Add-on request failed: %s", err)
