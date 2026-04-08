@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from homeassistant.components.conversation import async_should_expose
+from homeassistant.components.homeassistant.exposed_entities import (
+    async_should_expose,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
