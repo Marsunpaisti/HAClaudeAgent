@@ -58,7 +58,9 @@ def _build_auth_env(auth_token: str) -> dict[str, str]:
     """Return the env dict for the SDK based on the token format."""
     if not auth_token:
         return {}
-    if auth_token.startswith("sk-ant-"):
+    # API keys: sk-ant-api03-...
+    # OAuth tokens: sk-ant-oat01-... (or anything else)
+    if auth_token.startswith("sk-ant-api"):
         return {"ANTHROPIC_API_KEY": auth_token}
     return {"CLAUDE_CODE_OAUTH_TOKEN": auth_token}
 
