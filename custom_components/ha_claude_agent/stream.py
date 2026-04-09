@@ -176,3 +176,29 @@ def reconstruct_exception(payload: dict[str, Any]) -> BaseException:
                 cls_name,
             )
     return exc
+
+
+async def sdk_stream(resp: _SSEResponse) -> AsyncGenerator[Any]:
+    """Consume the add-on's SSE stream, yielding SDK message instances.
+
+    For each `Message`-typed event, yields the reconstructed SDK dataclass
+    instance (AssistantMessage, StreamEvent, SystemMessage, ResultMessage,
+    UserMessage, RateLimitEvent, etc.). For an `exception` event, logs the
+    add-on-side traceback and raises the reconstructed SDK exception.
+
+    If the add-on emits a `_type` that isn't a known SDK class, the raw
+    dict is yielded; the consumer's `match` statement will naturally fall
+    through its `case _:` arm without crashing.
+    """
+    async for event_type, data in parse_sse_stream(resp):
+        if event_type == "exception":
+            traceback_text = data.get("traceback", "")
+            if traceback_text:
+                _LOGGER.error(
+                    "Add-on raised %s. Add-on-side traceback:\n%s",
+                    data.get("_type", "unknown"),
+                    traceback_text,
+                )
+            raise reconstruct_exception(data)
+
+        yield from_jsonable(data)

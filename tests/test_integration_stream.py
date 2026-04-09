@@ -10,6 +10,7 @@ from custom_components.ha_claude_agent.stream import (
     from_jsonable,
     parse_sse_stream,
     reconstruct_exception,
+    sdk_stream,
 )
 
 
@@ -357,3 +358,117 @@ def test_reconstruct_exception_non_sdk_class_falls_back_to_sdk_base():
     assert isinstance(exc, ClaudeSDKError)
     assert "ValueError" in str(exc)
     assert "bad value" in str(exc)
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_yields_reconstructed_messages():
+    from claude_agent_sdk import StreamEvent, SystemMessage
+
+    resp = _FakeResponse(
+        [
+            b"event: SystemMessage\n",
+            b'data: {"_type": "SystemMessage", "subtype": "init", "data": {"session_id": "s1"}}\n',
+            b"\n",
+            b"event: StreamEvent\n",
+            b'data: {"_type": "StreamEvent", "uuid": "u1", "session_id": "s1", "event": {"type": "content_block_delta", "delta": {"text": "hi"}}, "parent_tool_use_id": null}\n',
+            b"\n",
+        ]
+    )
+    messages = [m async for m in sdk_stream(resp)]
+
+    assert len(messages) == 2
+    assert isinstance(messages[0], SystemMessage)
+    assert messages[0].subtype == "init"
+    assert messages[0].data == {"session_id": "s1"}
+    assert isinstance(messages[1], StreamEvent)
+    assert messages[1].session_id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_raises_sdk_exception_on_exception_event():
+    from claude_agent_sdk import CLINotFoundError
+
+    resp = _FakeResponse(
+        [
+            b"event: exception\n",
+            b'data: {"_type": "CLINotFoundError", "module": "claude_agent_sdk._errors", "message": "Claude Code not found", "attrs": {}, "traceback": "..."}\n',
+            b"\n",
+        ]
+    )
+
+    with pytest.raises(CLINotFoundError) as exc_info:
+        async for _ in sdk_stream(resp):
+            pass
+    assert "Claude Code not found" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_raises_process_error_with_attrs():
+    from claude_agent_sdk import ProcessError
+
+    resp = _FakeResponse(
+        [
+            b"event: exception\n",
+            b'data: {"_type": "ProcessError", "module": "claude_agent_sdk._errors", "message": "crashed", "attrs": {"exit_code": 137, "stderr": "OOM"}, "traceback": "..."}\n',
+            b"\n",
+        ]
+    )
+
+    with pytest.raises(ProcessError) as exc_info:
+        async for _ in sdk_stream(resp):
+            pass
+    assert exc_info.value.exit_code == 137
+    assert exc_info.value.stderr == "OOM"
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_yields_messages_then_raises_on_trailing_exception():
+    """A stream that yields some messages before an exception — consumer
+    should receive the messages, then the exception is raised."""
+    from claude_agent_sdk import CLIConnectionError, StreamEvent
+
+    resp = _FakeResponse(
+        [
+            b"event: StreamEvent\n",
+            b'data: {"_type": "StreamEvent", "uuid": "u1", "session_id": "s1", "event": {"type": "content_block_delta", "delta": {"text": "partial"}}, "parent_tool_use_id": null}\n',
+            b"\n",
+            b"event: exception\n",
+            b'data: {"_type": "CLIConnectionError", "module": "claude_agent_sdk._errors", "message": "lost connection", "attrs": {}, "traceback": "..."}\n',
+            b"\n",
+        ]
+    )
+
+    seen: list = []
+    with pytest.raises(CLIConnectionError):
+        async for message in sdk_stream(resp):
+            seen.append(message)
+
+    assert len(seen) == 1
+    assert isinstance(seen[0], StreamEvent)
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_logs_addon_traceback_before_raising(caplog):
+    import logging
+
+    from claude_agent_sdk import CLINotFoundError
+
+    resp = _FakeResponse(
+        [
+            b"event: exception\n",
+            b'data: {"_type": "CLINotFoundError", "module": "claude_agent_sdk._errors", "message": "gone", "attrs": {}, "traceback": "Traceback (most recent call last):\\n  File \\"server.py\\"\\n"}\n',
+            b"\n",
+        ]
+    )
+
+    with (
+        caplog.at_level(
+            logging.ERROR, logger="custom_components.ha_claude_agent.stream"
+        ),
+        pytest.raises(CLINotFoundError),
+    ):
+        async for _ in sdk_stream(resp):
+            pass
+
+    # The add-on's traceback string should appear in the logs
+    assert any("Traceback" in r.message for r in caplog.records)
