@@ -175,7 +175,9 @@ def test_exception_to_dict_captures_traceback_when_raised():
 
     assert "RuntimeError" in payload["traceback"]
     assert "boom" in payload["traceback"]
-    assert "test_exception_to_dict_captures_traceback_when_raised" in payload["traceback"]
+    assert (
+        "test_exception_to_dict_captures_traceback_when_raised" in payload["traceback"]
+    )
 
 
 def test_exception_to_dict_skips_dunder_and_underscore_attrs():
