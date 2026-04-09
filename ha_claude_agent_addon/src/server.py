@@ -7,6 +7,7 @@ the HA custom integration.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -160,6 +161,16 @@ async def _stream_query(
         async for message in query(prompt=body.prompt, options=options):
             yield _sse_event(type(message).__name__, to_jsonable(message))
 
+    except GeneratorExit:
+        # Client disconnected or generator is being closed.
+        # Async generators MUST NOT yield after catching GeneratorExit —
+        # Python will raise RuntimeError if we try. Re-raise to let the
+        # runtime close us cleanly.
+        raise
+    except asyncio.CancelledError:
+        # Task cancellation (uvicorn shutdown, timeout, etc.) is normal
+        # infrastructure, not a query failure. Propagate without logging.
+        raise
     except BaseException as err:  # noqa: BLE001
         _LOGGER.exception("Query failed")
         yield _sse_event("exception", exception_to_dict(err))
