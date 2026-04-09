@@ -127,3 +127,41 @@ def from_jsonable(obj: Any) -> Any:
     if isinstance(obj, list):
         return [from_jsonable(x) for x in obj]
     return obj
+
+
+def reconstruct_exception(payload: dict[str, Any]) -> BaseException:
+    """Reconstruct an SDK exception from a forwarded payload.
+
+    Looks up the class by name in `claude_agent_sdk`. For classes with
+    non-standard `__init__` signatures (e.g. `CLIJSONDecodeError`),
+    bypasses `__init__` via `cls.__new__(cls)` and directly sets the
+    message via `Exception.__init__`, then restores captured instance
+    attributes via `setattr`.
+
+    Unknown class names or non-exception classes fall back to a plain
+    `ClaudeSDKError` with a composed message, so the integration's
+    `except ClaudeSDKError` handler always catches the result.
+    """
+    cls_name = payload.get("_type", "")
+    message = payload.get("message", "")
+    attrs = payload.get("attrs") or {}
+
+    cls = getattr(claude_agent_sdk, cls_name, None)
+    if not (
+        isinstance(cls, type)
+        and issubclass(cls, BaseException)
+        and issubclass(cls, claude_agent_sdk.ClaudeSDKError)
+    ):
+        composed = f"{cls_name}: {message}" if cls_name else message
+        return claude_agent_sdk.ClaudeSDKError(composed)
+
+    exc = cls.__new__(cls)
+    Exception.__init__(exc, message)
+    for key, value in attrs.items():
+        try:
+            setattr(exc, key, value)
+        except (AttributeError, TypeError):
+            _LOGGER.debug(
+                "Could not restore attr %s on reconstructed %s", key, cls_name
+            )
+    return exc

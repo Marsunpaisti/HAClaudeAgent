@@ -6,7 +6,11 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from custom_components.ha_claude_agent.stream import from_jsonable, parse_sse_stream
+from custom_components.ha_claude_agent.stream import (
+    from_jsonable,
+    parse_sse_stream,
+    reconstruct_exception,
+)
 
 
 class _FakeContent:
@@ -261,3 +265,95 @@ def test_from_jsonable_tolerates_unknown_fields():
     result = from_jsonable(payload)
     assert isinstance(result, TextBlock)
     assert result.text == "hello"
+
+
+def test_reconstruct_exception_cli_not_found():
+    from claude_agent_sdk import CLIConnectionError, CLINotFoundError
+
+    payload = {
+        "_type": "CLINotFoundError",
+        "module": "claude_agent_sdk._errors",
+        "message": "Claude Code not found: /usr/bin/claude",
+        "attrs": {},
+        "traceback": "Traceback...",
+    }
+    exc = reconstruct_exception(payload)
+
+    assert isinstance(exc, CLINotFoundError)
+    # CLINotFoundError inherits from CLIConnectionError
+    assert isinstance(exc, CLIConnectionError)
+    assert str(exc) == "Claude Code not found: /usr/bin/claude"
+
+
+def test_reconstruct_exception_process_error_preserves_attrs():
+    from claude_agent_sdk import ProcessError
+
+    payload = {
+        "_type": "ProcessError",
+        "module": "claude_agent_sdk._errors",
+        "message": "process crashed (exit code: 137)",
+        "attrs": {"exit_code": 137, "stderr": "OOM killed"},
+        "traceback": "Traceback...",
+    }
+    exc = reconstruct_exception(payload)
+
+    assert isinstance(exc, ProcessError)
+    assert exc.exit_code == 137
+    assert exc.stderr == "OOM killed"
+    assert "exit code: 137" in str(exc)
+
+
+def test_reconstruct_exception_cli_json_decode_error_bypasses_init():
+    """CLIJSONDecodeError.__init__ requires (line, original_error).
+    Reconstruction must bypass __init__ to avoid signature mismatches."""
+    from claude_agent_sdk import CLIJSONDecodeError
+
+    payload = {
+        "_type": "CLIJSONDecodeError",
+        "module": "claude_agent_sdk._errors",
+        "message": "Failed to decode JSON: bad line...",
+        "attrs": {"line": "bad line"},
+        "traceback": "Traceback...",
+    }
+    exc = reconstruct_exception(payload)
+
+    assert isinstance(exc, CLIJSONDecodeError)
+    assert exc.line == "bad line"
+    assert "Failed to decode JSON" in str(exc)
+
+
+def test_reconstruct_exception_unknown_class_falls_back_to_sdk_base():
+    from claude_agent_sdk import ClaudeSDKError
+
+    payload = {
+        "_type": "SomeFutureError",
+        "module": "claude_agent_sdk._errors",
+        "message": "a future error",
+        "attrs": {},
+        "traceback": "",
+    }
+    exc = reconstruct_exception(payload)
+
+    assert isinstance(exc, ClaudeSDKError)
+    # The composed message includes the original class name for debuggability
+    assert "SomeFutureError" in str(exc)
+    assert "a future error" in str(exc)
+
+
+def test_reconstruct_exception_non_sdk_class_falls_back_to_sdk_base():
+    """A ValueError from the add-on's own code should still become a
+    ClaudeSDKError so the integration's `except ClaudeSDKError` catches it."""
+    from claude_agent_sdk import ClaudeSDKError
+
+    payload = {
+        "_type": "ValueError",
+        "module": "builtins",
+        "message": "bad value",
+        "attrs": {},
+        "traceback": "",
+    }
+    exc = reconstruct_exception(payload)
+
+    assert isinstance(exc, ClaudeSDKError)
+    assert "ValueError" in str(exc)
+    assert "bad value" in str(exc)
