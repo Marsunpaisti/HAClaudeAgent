@@ -16,14 +16,23 @@ def to_jsonable(obj: Any) -> Any:
     """Recursively convert an object to JSON-serializable form.
 
     Dataclass instances are emitted as dicts with a `_type` key containing
-    the class name. Plain dicts, lists, and primitives pass through
-    unchanged. Nested dataclasses (e.g. `AssistantMessage.content[0]` being
-    a `TextBlock`) are walked recursively so every level carries its type
-    tag.
+    the class name. Plain dicts and primitives pass through unchanged.
+    Lists and tuples are both serialized as JSON arrays — tuple-ness is
+    not preserved (no SDK type uses tuples, so this is acceptable). Nested
+    dataclasses (e.g. `AssistantMessage.content[0]` being a `TextBlock`)
+    are walked recursively so every level carries its type tag.
+
+    Raises ValueError if a dataclass has a field literally named `_type`,
+    which would collide with the type discriminator key.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         result: dict[str, Any] = {"_type": type(obj).__name__}
         for f in dataclasses.fields(obj):
+            if f.name == "_type":
+                raise ValueError(
+                    f"{type(obj).__name__} has a field named '_type', "
+                    "which collides with the type discriminator key"
+                )
             result[f.name] = to_jsonable(getattr(obj, f.name))
         return result
     if isinstance(obj, dict):

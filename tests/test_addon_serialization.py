@@ -72,7 +72,7 @@ def test_dict_values_containing_dataclasses_are_tagged():
     assert result == {"leaf": {"_type": "_Leaf", "text": "x"}}
 
 
-def test_sdk_assistant_message_round_trips_with_content_block_types():
+def test_sdk_assistant_message_is_serialized_with_content_block_types():
     """Smoke test against a real SDK type shape."""
     from claude_agent_sdk import AssistantMessage, TextBlock, ToolUseBlock
 
@@ -94,3 +94,16 @@ def test_sdk_assistant_message_round_trips_with_content_block_types():
         "name": "call_service",
         "input": {"foo": "bar"},
     }
+
+
+def test_dataclass_with_type_field_raises_collision_error():
+    """Field named '_type' would collide with the type discriminator."""
+    import pytest
+
+    @dataclass
+    class _Colliding:
+        _type: str
+        value: int
+
+    with pytest.raises(ValueError, match="collides with the type discriminator"):
+        to_jsonable(_Colliding(_type="user-supplied", value=1))
