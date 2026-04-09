@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any, Protocol
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 class _SSEResponse(Protocol):
     """Minimal duck-typed interface for the aiohttp response we consume."""
 
-    content: Any
+    content: AsyncIterable[bytes]
 
 
 async def parse_sse_stream(
@@ -51,7 +51,24 @@ async def parse_sse_stream(
             data_line = None
             continue
         if line.startswith("event:"):
-            event_type = line[6:].strip()
+            event_type = line.removeprefix("event:").strip()
         elif line.startswith("data:"):
-            data_line = line[5:].strip()
+            chunk = line.removeprefix("data:").strip()
+            data_line = chunk if data_line is None else f"{data_line}\n{chunk}"
         # Lines starting with `:` (comments) or anything else are ignored.
+
+    # Flush any partial event buffered when the stream ends without a
+    # trailing blank line — e.g. when the add-on closes the connection
+    # mid-event after an abrupt failure.
+    if event_type is not None and data_line is not None:
+        try:
+            data = json.loads(data_line)
+        except json.JSONDecodeError:
+            _LOGGER.warning(
+                "Bad SSE data payload for event %s: %r",
+                event_type,
+                data_line,
+            )
+        else:
+            if isinstance(data, dict):
+                yield event_type, data

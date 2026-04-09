@@ -113,3 +113,36 @@ async def test_parse_sse_stream_handles_crlf():
     )
     events = [evt async for evt in parse_sse_stream(resp)]
     assert events == [("a", {"n": 1})]
+
+
+@pytest.mark.asyncio
+async def test_parse_sse_stream_flushes_event_without_trailing_blank_line():
+    """Stream ending mid-event (no trailing blank) still yields the buffered event."""
+    resp = _FakeResponse([
+        b"event: truncated\n",
+        b'data: {"ok": true}\n',
+        # NOTE: no trailing b"\n"
+    ])
+    events = [evt async for evt in parse_sse_stream(resp)]
+    assert events == [("truncated", {"ok": True})]
+
+
+@pytest.mark.asyncio
+async def test_parse_sse_stream_empty_stream_yields_nothing():
+    """A stream with zero lines yields nothing and doesn't raise."""
+    resp = _FakeResponse([])
+    events = [evt async for evt in parse_sse_stream(resp)]
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_parse_sse_stream_concatenates_multiline_data():
+    """Multiple data: lines per event should be joined with \\n per SSE spec."""
+    resp = _FakeResponse([
+        b"event: multiline\n",
+        b'data: {"line1":\n',
+        b'data: true}\n',
+        b"\n",
+    ])
+    events = [evt async for evt in parse_sse_stream(resp)]
+    assert events == [("multiline", {"line1": True})]
