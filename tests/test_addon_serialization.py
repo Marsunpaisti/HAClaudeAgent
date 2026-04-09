@@ -107,3 +107,85 @@ def test_dataclass_with_type_field_raises_collision_error():
 
     with pytest.raises(ValueError, match="collides with the type discriminator"):
         to_jsonable(_Colliding(_type="user-supplied", value=1))
+
+
+def test_exception_to_dict_captures_basic_exception():
+    from serialization import exception_to_dict
+
+    err = ValueError("bad value")
+    payload = exception_to_dict(err)
+
+    assert payload["_type"] == "ValueError"
+    assert payload["module"] == "builtins"
+    assert payload["message"] == "bad value"
+    assert payload["attrs"] == {}
+    assert "traceback" in payload
+    assert isinstance(payload["traceback"], str)
+
+
+def test_exception_to_dict_captures_sdk_cli_not_found():
+    from claude_agent_sdk import CLINotFoundError
+    from serialization import exception_to_dict
+
+    err = CLINotFoundError(message="Claude Code not found", cli_path="/usr/bin/claude")
+    payload = exception_to_dict(err)
+
+    assert payload["_type"] == "CLINotFoundError"
+    assert payload["module"] == "claude_agent_sdk._errors"
+    assert "Claude Code not found" in payload["message"]
+    assert "/usr/bin/claude" in payload["message"]
+
+
+def test_exception_to_dict_captures_process_error_attrs():
+    from claude_agent_sdk import ProcessError
+    from serialization import exception_to_dict
+
+    err = ProcessError("process crashed", exit_code=137, stderr="OOM killed")
+    payload = exception_to_dict(err)
+
+    assert payload["_type"] == "ProcessError"
+    assert payload["attrs"]["exit_code"] == 137
+    assert payload["attrs"]["stderr"] == "OOM killed"
+
+
+def test_exception_to_dict_non_serializable_attrs_become_repr():
+    from serialization import exception_to_dict
+
+    class WeirdError(Exception):
+        def __init__(self):
+            super().__init__("weird")
+            self.nested_exc = ValueError("inner")
+
+    err = WeirdError()
+    payload = exception_to_dict(err)
+
+    # ValueError is not json.dumps-able → must fall back to repr
+    assert isinstance(payload["attrs"]["nested_exc"], str)
+    assert "ValueError" in payload["attrs"]["nested_exc"]
+    assert "inner" in payload["attrs"]["nested_exc"]
+
+
+def test_exception_to_dict_captures_traceback_when_raised():
+    from serialization import exception_to_dict
+
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as err:
+        payload = exception_to_dict(err)
+
+    assert "RuntimeError" in payload["traceback"]
+    assert "boom" in payload["traceback"]
+    assert "test_exception_to_dict_captures_traceback_when_raised" in payload["traceback"]
+
+
+def test_exception_to_dict_skips_dunder_and_underscore_attrs():
+    from serialization import exception_to_dict
+
+    class AnnotatedError(Exception):
+        def __init__(self):
+            super().__init__("msg")
+            self.public = "keep"
+            self._private = "drop"
+
+    payload = exception_to_dict(AnnotatedError())
+    assert payload["attrs"] == {"public": "keep"}

@@ -9,6 +9,8 @@ the original class on the other side of the wire.
 from __future__ import annotations
 
 import dataclasses
+import json
+import traceback
 from typing import Any
 
 
@@ -40,3 +42,36 @@ def to_jsonable(obj: Any) -> Any:
     if isinstance(obj, (list, tuple)):
         return [to_jsonable(x) for x in obj]
     return obj
+
+
+def exception_to_dict(err: BaseException) -> dict[str, Any]:
+    """Capture an exception as a JSON-serializable dict.
+
+    Serializes all public instance attributes (anything in `vars(err)` that
+    doesn't start with an underscore). Attributes that can't be serialized
+    to JSON fall back to their `repr()` form — this preserves debugging
+    information for things like `CLIJSONDecodeError.original_error` which
+    is itself an Exception.
+
+    The formatted traceback is included as a string so the integration can
+    log the add-on-side stack trace when re-raising.
+    """
+    safe_attrs: dict[str, Any] = {}
+    for key, value in vars(err).items():
+        if key.startswith("_"):
+            continue
+        try:
+            json.dumps(value)
+            safe_attrs[key] = value
+        except (TypeError, ValueError):
+            safe_attrs[key] = repr(value)
+
+    return {
+        "_type": type(err).__name__,
+        "module": type(err).__module__,
+        "message": str(err),
+        "attrs": safe_attrs,
+        "traceback": "".join(
+            traceback.format_exception(type(err), err, err.__traceback__)
+        ),
+    }
