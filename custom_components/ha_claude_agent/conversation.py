@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from dataclasses import dataclass
 
 import aiohttp
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeSDKError,
+    CLIConnectionError,
+    CLIJSONDecodeError,
+    CLINotFoundError,
+    ProcessError,
+    RateLimitEvent,
+    ResultMessage,
+    StreamEvent,
+    SystemMessage,
+)
 from homeassistant.components import conversation
 from homeassistant.components.conversation import (
     AssistantContentDeltaDict,
@@ -42,49 +53,58 @@ from .const import (
 )
 from .helpers import build_system_prompt
 from .models import QueryRequest
+from .stream import sdk_stream
 
 _LOGGER = logging.getLogger(__name__)
 
-# Error messages keyed by error_code from the add-on response
-_ERROR_MESSAGES = {
+# Error messages keyed by:
+#   - SDK exception class name (CLINotFoundError, ProcessError, ...)
+#   - ResultMessage subtype (error_max_turns, error_max_budget_usd, ...)
+#   - AssistantMessageError value (authentication_failed, billing_error, ...)
+#   - Transport-layer error code (addon_unreachable)
+_ERROR_MESSAGES: dict[str, str] = {
+    # SDK exceptions
+    "CLINotFoundError": (
+        "Claude Code CLI not found in the add-on container. Try restarting the add-on."
+    ),
+    "ProcessError": "Claude Code process crashed. Check the add-on logs.",
+    "CLIConnectionError": (
+        "Could not connect to Claude Code CLI. Check the add-on logs."
+    ),
+    "CLIJSONDecodeError": "Received an invalid response from Claude. Try again.",
+    "ClaudeSDKError": "An unexpected error occurred in the add-on.",
+    # ResultMessage error subtypes
     "error_max_turns": (
         "Used all tool turns and couldn't finish. "
         "Try a simpler request or increase the max turns setting."
     ),
     "error_max_budget_usd": "This request hit the spending limit.",
     "error_during_execution": "Something went wrong while processing.",
+    # AssistantMessage.error values
     "authentication_failed": (
         "Claude authentication failed. Check the auth token in the add-on settings."
     ),
-    "billing_error": ("Billing issue — check your account at console.anthropic.com."),
+    "billing_error": "Billing issue — check your account at console.anthropic.com.",
     "rate_limit": "Rate limited. Please wait a moment and try again.",
-    "cli_not_found": (
-        "Claude Code CLI not found in the add-on container. Try restarting the add-on."
-    ),
-    "process_error": ("Claude Code process crashed. Check the add-on logs."),
-    "cli_connection_error": (
-        "Could not connect to Claude Code CLI. Check the add-on logs."
-    ),
-    "parse_error": ("Received an invalid response from Claude. Try again."),
-    "internal_error": ("An unexpected error occurred in the add-on."),
+    "invalid_request": "The request to Claude was invalid.",
+    "server_error": "Claude's servers returned an error. Please try again.",
+    "unknown": "An unknown error occurred.",
+    # Transport layer
     "addon_unreachable": (
         "Cannot reach the HA Claude Agent add-on. Is the add-on installed and running?"
-    ),
-    "stream_interrupted": (
-        "The connection to the add-on was interrupted. Please try again."
     ),
 }
 
 
-class _StreamState:
-    """Mutable state carried across the SSE-consumer generator."""
+@dataclass
+class _StreamResult:
+    """Mutable holder for stream side-effects consumed by the delta adapter."""
 
-    def __init__(self) -> None:
-        self.session_id: str | None = None
-        self.cost_usd: float | None = None
-        self.num_turns: int | None = None
-        self.error_code: str | None = None
-        self.error_message: str | None = None
+    session_id: str | None = None
+    cost_usd: float | None = None
+    num_turns: int | None = None
+    result_error_subtype: str | None = None  # ResultMessage.subtype if != "success"
+    assistant_error: str | None = None  # AssistantMessage.error if set
 
 
 async def async_setup_entry(
@@ -168,7 +188,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         """Handle a conversation turn by delegating to the add-on."""
         runtime_data = self.entry.runtime_data
 
-        # ── Build request payload ──
+        # Build request payload
         model = self.subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
         user_prompt = self.subentry.data.get(CONF_PROMPT, DEFAULT_PROMPT)
         system_prompt = build_system_prompt(
@@ -199,10 +219,9 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             exposed_entities=self._get_exposed_entity_ids(),
         )
 
-        # ── Open SSE stream to the add-on ──
         addon_url = runtime_data.addon_url
         http_session = async_get_clientsession(self.hass)
-        state = _StreamState()
+        result_state = _StreamResult()
 
         try:
             async with http_session.post(
@@ -214,10 +233,9 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 resp.raise_for_status()
                 async for _content in chat_log.async_add_delta_content_stream(
                     user_input.agent_id,
-                    _transform_stream(resp, state),
+                    _deltas_from_sdk_stream(resp, result_state),
                 ):
-                    # The ChatLog accumulates deltas internally; we just need
-                    # to drive the generator to completion.
+                    # ChatLog accumulates deltas internally — just drain.
                     pass
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error("Add-on request failed: %s", err)
@@ -226,33 +244,63 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 chat_log,
                 user_input.language,
             )
+        except CLINotFoundError:
+            return self._error_response(
+                _ERROR_MESSAGES["CLINotFoundError"], chat_log, user_input.language
+            )
+        except ProcessError as err:
+            _LOGGER.error("Claude process crashed: exit=%s", err.exit_code)
+            return self._error_response(
+                _ERROR_MESSAGES["ProcessError"], chat_log, user_input.language
+            )
+        except CLIConnectionError:
+            return self._error_response(
+                _ERROR_MESSAGES["CLIConnectionError"],
+                chat_log,
+                user_input.language,
+            )
+        except CLIJSONDecodeError:
+            return self._error_response(
+                _ERROR_MESSAGES["CLIJSONDecodeError"],
+                chat_log,
+                user_input.language,
+            )
+        except ClaudeSDKError as err:
+            _LOGGER.error("Unknown SDK error: %s", err)
+            return self._error_response(
+                _ERROR_MESSAGES["ClaudeSDKError"], chat_log, user_input.language
+            )
 
         _LOGGER.info(
-            "Stream complete: error=%s, session=%s, cost=$%s, turns=%s",
-            state.error_code,
-            state.session_id,
-            state.cost_usd,
-            state.num_turns,
+            "Stream complete: session=%s, cost=$%s, turns=%s, "
+            "result_error=%s, assistant_error=%s",
+            result_state.session_id,
+            result_state.cost_usd,
+            result_state.num_turns,
+            result_state.result_error_subtype,
+            result_state.assistant_error,
         )
 
-        # ── Handle stream-level errors ──
-        if state.error_code:
+        # Soft errors: ResultMessage with error subtype, or AssistantMessage.error
+        if result_state.result_error_subtype:
             msg = _ERROR_MESSAGES.get(
-                state.error_code,
-                state.error_message or f"Add-on error: {state.error_code}",
+                result_state.result_error_subtype,
+                f"Query failed: {result_state.result_error_subtype}",
+            )
+            return self._error_response(msg, chat_log, user_input.language)
+        if result_state.assistant_error:
+            msg = _ERROR_MESSAGES.get(
+                result_state.assistant_error,
+                f"Assistant error: {result_state.assistant_error}",
             )
             return self._error_response(msg, chat_log, user_input.language)
 
-        # ── Store session mapping ──
-        if state.session_id:
-            runtime_data.sessions[chat_log.conversation_id] = state.session_id
+        # Store session mapping
+        if result_state.session_id:
+            runtime_data.sessions[chat_log.conversation_id] = result_state.session_id
 
-        # ── Build HA response ──
-        # The ChatLog already has the assistant content from the delta stream.
-        # For the intent response, pull the spoken text from the last assistant
-        # message in the chat log.
+        # Build HA response
         speech = _last_assistant_text(chat_log) or "I have no response."
-
         intent_response = intent.IntentResponse(language=user_input.language)
         intent_response.async_set_speech(speech)
         return ConversationResult(
@@ -270,47 +318,67 @@ def _last_assistant_text(chat_log: ChatLog) -> str:
     return ""
 
 
-async def _transform_stream(
+async def _deltas_from_sdk_stream(
     resp: aiohttp.ClientResponse,
-    state: _StreamState,
+    state: _StreamResult,
 ) -> AsyncGenerator[AssistantContentDeltaDict]:
-    """Read SSE events from the add-on and yield ChatLog deltas.
+    """Adapter: consume sdk_stream() and yield ChatLog deltas.
 
-    Side-effects: stashes session/result/error metadata onto `state`.
+    Side-effects: records session/result metadata onto `state`. The
+    ChatLog machinery only cares about assistant role markers and
+    content/thinking deltas; other SDK message types (ResultMessage,
+    SystemMessage, RateLimitEvent, etc.) are consumed silently for
+    their metadata.
     """
     role_yielded = False
 
-    async for event_type, data in _parse_sse(resp):
-        if event_type == "stream":
-            delta = _map_stream_event(data)
-            if delta is None:
-                continue
-            # Ensure we open an assistant message before the first text delta.
-            if not role_yielded:
-                yield {"role": "assistant"}
-                role_yielded = True
-            yield delta
+    async for message in sdk_stream(resp):
+        match message:
+            case StreamEvent(event=ev):
+                delta = _delta_from_anthropic_event(ev)
+                if delta is None:
+                    continue
+                if not role_yielded:
+                    yield {"role": "assistant"}
+                    role_yielded = True
+                yield delta
 
-        elif event_type == "session":
-            state.session_id = data.get("session_id")
+            case SystemMessage(subtype="init", data=data):
+                state.session_id = data.get("session_id") or state.session_id
 
-        elif event_type == "result":
-            state.session_id = data.get("session_id") or state.session_id
-            state.cost_usd = data.get("cost_usd")
-            state.num_turns = data.get("num_turns")
-            error_code = data.get("error_code")
-            if error_code:
-                state.error_code = error_code
+            case ResultMessage(
+                session_id=sid,
+                subtype=subtype,
+                total_cost_usd=cost,
+                num_turns=turns,
+            ):
+                state.session_id = sid or state.session_id
+                state.cost_usd = cost
+                state.num_turns = turns
+                if subtype != "success":
+                    state.result_error_subtype = subtype
 
-        elif event_type == "error":
-            state.error_code = data.get("error_code") or "internal_error"
-            state.error_message = data.get("message")
-            # No more events after error — return to close the generator.
-            return
+            case AssistantMessage(error=error) if error is not None:
+                state.assistant_error = error
+
+            case RateLimitEvent(rate_limit_info=info):
+                _LOGGER.warning(
+                    "Claude rate limit: status=%s type=%s utilization=%s",
+                    info.status,
+                    info.rate_limit_type,
+                    info.utilization,
+                )
+
+            case _:
+                # AssistantMessage (non-error), UserMessage (tool results),
+                # and any future Message subtypes are ignored for now.
+                pass
 
 
-def _map_stream_event(event: dict[str, Any]) -> AssistantContentDeltaDict | None:
-    """Map a raw SDK StreamEvent.event dict to a ChatLog delta, or None."""
+def _delta_from_anthropic_event(
+    event: dict,
+) -> AssistantContentDeltaDict | None:
+    """Map a raw Anthropic stream event dict to a ChatLog delta, or None."""
     if event.get("type") != "content_block_delta":
         return None
     delta = event.get("delta") or {}
@@ -322,39 +390,3 @@ def _map_stream_event(event: dict[str, Any]) -> AssistantContentDeltaDict | None
         thinking = delta.get("thinking", "")
         return {"thinking_content": thinking} if thinking else None
     return None
-
-
-async def _parse_sse(
-    resp: aiohttp.ClientResponse,
-) -> AsyncGenerator[tuple[str, dict[str, Any]]]:
-    """Parse an SSE stream from an aiohttp response.
-
-    Yields (event_type, data_dict) tuples. Skips events without a valid
-    `event:` and `data:` pair. Handles only the simple single-line
-    `data:` format emitted by our add-on.
-    """
-    event_type: str | None = None
-    data_line: str | None = None
-
-    async for raw_line in resp.content:
-        line = raw_line.decode("utf-8").rstrip("\r\n")
-        if line == "":
-            # End of event: emit if complete.
-            if event_type is not None and data_line is not None:
-                try:
-                    data = json.loads(data_line)
-                except json.JSONDecodeError:
-                    _LOGGER.warning(
-                        "Bad SSE data payload for event %s: %r", event_type, data_line
-                    )
-                else:
-                    if isinstance(data, dict):
-                        yield event_type, data
-            event_type = None
-            data_line = None
-            continue
-        if line.startswith("event:"):
-            event_type = line[6:].strip()
-        elif line.startswith("data:"):
-            data_line = line[5:].strip()
-        # Lines starting with `:` (comments) or anything else are ignored.
