@@ -89,6 +89,12 @@ Requires [uv](https://docs.astral.sh/uv/) for dependency management.
 uv sync
 ```
 
+Optionally, install the pre-commit hooks so ruff and basic hygiene checks run on every commit:
+
+```bash
+uv run pre-commit install
+```
+
 ### Verification
 
 ```bash

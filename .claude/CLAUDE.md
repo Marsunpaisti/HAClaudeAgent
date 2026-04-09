@@ -67,6 +67,20 @@ Uses `uv` for dependency management. Two lockfiles:
 uv sync          # install dev dependencies
 ```
 
+### Pre-commit hooks (optional)
+
+After cloning, install the git hooks that auto-run ruff and basic hygiene checks on every commit:
+
+```bash
+uv run pre-commit install
+```
+
+Run all hooks manually against every file:
+
+```bash
+uv run pre-commit run --all-files
+```
+
 ### Verification
 
 ```bash
