@@ -18,20 +18,14 @@ from typing import Any
 import uvicorn
 from claude_agent_sdk import (
     ClaudeAgentOptions,
-    CLIConnectionError,
-    CLIJSONDecodeError,
-    CLINotFoundError,
-    ProcessError,
-    ResultMessage,
-    SystemMessage,
     create_sdk_mcp_server,
     query,
 )
-from claude_agent_sdk.types import StreamEvent
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from ha_client import HAClient
 from models import QueryRequest
+from serialization import exception_to_dict, to_jsonable
 from tools import create_ha_tools
 
 logging.basicConfig(
@@ -164,97 +158,11 @@ async def _stream_query(
             options.resume = body.session_id
 
         async for message in query(prompt=body.prompt, options=options):
-            if isinstance(message, SystemMessage) and message.subtype == "init":
-                session_id = message.data.get("session_id")
-                _LOGGER.info("Session started: %s", session_id)
-                yield _sse_event("session", {"session_id": session_id})
+            yield _sse_event(type(message).__name__, to_jsonable(message))
 
-            elif isinstance(message, StreamEvent):
-                # Forward the raw Anthropic stream event dict as-is.
-                yield _sse_event("stream", message.event)
-
-            elif isinstance(message, ResultMessage):
-                error_code: str | None = None
-                if message.subtype != "success":
-                    error_code = message.subtype
-                _LOGGER.info(
-                    "Result: subtype=%s, turns=%s, cost=$%s",
-                    message.subtype,
-                    message.num_turns,
-                    message.total_cost_usd,
-                )
-                yield _sse_event(
-                    "result",
-                    {
-                        "session_id": message.session_id,
-                        "cost_usd": message.total_cost_usd,
-                        "num_turns": message.num_turns,
-                        "error_code": error_code,
-                    },
-                )
-
-            # AssistantMessage is intentionally skipped: the content was
-            # already streamed via StreamEvent, and we don't need the
-            # aggregated copy.
-
-    except CLINotFoundError:
-        _LOGGER.error("Claude Code CLI not found in container")
-        yield _sse_event(
-            "error",
-            {
-                "error_code": "cli_not_found",
-                "message": (
-                    "Claude Code CLI not found in the add-on container. "
-                    "The add-on image may need to be rebuilt."
-                ),
-            },
-        )
-
-    except ProcessError as err:
-        _LOGGER.error("CLI process failed (exit %s): %s", err.exit_code, err)
-        yield _sse_event(
-            "error",
-            {
-                "error_code": "process_error",
-                "message": (
-                    f"Claude Code process crashed (exit code {err.exit_code}). "
-                    "Check the add-on logs for details."
-                ),
-            },
-        )
-
-    except CLIConnectionError as err:
-        _LOGGER.error("CLI connection error: %s", err)
-        yield _sse_event(
-            "error",
-            {
-                "error_code": "cli_connection_error",
-                "message": (
-                    "Could not connect to Claude Code CLI. "
-                    "Check the add-on logs for details."
-                ),
-            },
-        )
-
-    except CLIJSONDecodeError as err:
-        _LOGGER.error("Failed to parse CLI response: %s", err)
-        yield _sse_event(
-            "error",
-            {
-                "error_code": "parse_error",
-                "message": "Received an invalid response from Claude Code.",
-            },
-        )
-
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.exception("Unexpected error during query")
-        yield _sse_event(
-            "error",
-            {
-                "error_code": "internal_error",
-                "message": f"An unexpected error occurred in the add-on: {err}",
-            },
-        )
+    except BaseException as err:  # noqa: BLE001
+        _LOGGER.exception("Query failed")
+        yield _sse_event("exception", exception_to_dict(err))
 
 
 @app.post("/query")
