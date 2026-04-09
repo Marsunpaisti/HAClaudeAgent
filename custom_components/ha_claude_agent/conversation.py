@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import aiohttp
@@ -92,6 +92,9 @@ _ERROR_MESSAGES: dict[str, str] = {
     # Transport layer
     "addon_unreachable": (
         "Cannot reach the HA Claude Agent add-on. Is the add-on installed and running?"
+    ),
+    "stream_interrupted": (
+        "The connection to the add-on was interrupted mid-stream. Please try again."
     ),
 }
 
@@ -223,6 +226,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         http_session = async_get_clientsession(self.hass)
         result_state = _StreamResult()
 
+        stream_started = False
         try:
             async with http_session.post(
                 f"{addon_url}/query",
@@ -231,6 +235,7 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 headers={"Accept": "text/event-stream"},
             ) as resp:
                 resp.raise_for_status()
+                stream_started = True
                 async for _content in chat_log.async_add_delta_content_stream(
                     user_input.agent_id,
                     _deltas_from_sdk_stream(resp, result_state),
@@ -238,13 +243,17 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     # ChatLog accumulates deltas internally — just drain.
                     pass
         except (aiohttp.ClientError, TimeoutError) as err:
-            _LOGGER.error("Add-on request failed: %s", err)
+            _LOGGER.error(
+                "Add-on request failed (stream_started=%s): %s", stream_started, err
+            )
+            key = "stream_interrupted" if stream_started else "addon_unreachable"
             return self._error_response(
-                _ERROR_MESSAGES["addon_unreachable"],
+                _ERROR_MESSAGES[key],
                 chat_log,
                 user_input.language,
             )
-        except CLINotFoundError:
+        except CLINotFoundError as err:
+            _LOGGER.error("Claude CLI not found: %s", err)
             return self._error_response(
                 _ERROR_MESSAGES["CLINotFoundError"], chat_log, user_input.language
             )
@@ -253,13 +262,15 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             return self._error_response(
                 _ERROR_MESSAGES["ProcessError"], chat_log, user_input.language
             )
-        except CLIConnectionError:
+        except CLIConnectionError as err:
+            _LOGGER.error("Claude CLI connection error: %s", err)
             return self._error_response(
                 _ERROR_MESSAGES["CLIConnectionError"],
                 chat_log,
                 user_input.language,
             )
-        except CLIJSONDecodeError:
+        except CLIJSONDecodeError as err:
+            _LOGGER.error("Claude CLI JSON decode error: %s", err)
             return self._error_response(
                 _ERROR_MESSAGES["CLIJSONDecodeError"],
                 chat_log,
@@ -281,6 +292,13 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             result_state.assistant_error,
         )
 
+        # Store session mapping BEFORE returning error responses — even on
+        # soft errors, we want the user's prior conversation context to be
+        # preserved for retry. The session is still valid on Claude's side;
+        # it's only the current turn that failed.
+        if result_state.session_id:
+            runtime_data.sessions[chat_log.conversation_id] = result_state.session_id
+
         # Soft errors: ResultMessage with error subtype, or AssistantMessage.error
         if result_state.result_error_subtype:
             msg = _ERROR_MESSAGES.get(
@@ -294,10 +312,6 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 f"Assistant error: {result_state.assistant_error}",
             )
             return self._error_response(msg, chat_log, user_input.language)
-
-        # Store session mapping
-        if result_state.session_id:
-            runtime_data.sessions[chat_log.conversation_id] = result_state.session_id
 
         # Build HA response
         speech = _last_assistant_text(chat_log) or "I have no response."
@@ -321,7 +335,7 @@ def _last_assistant_text(chat_log: ChatLog) -> str:
 async def _deltas_from_sdk_stream(
     resp: aiohttp.ClientResponse,
     state: _StreamResult,
-) -> AsyncGenerator[AssistantContentDeltaDict]:
+) -> AsyncIterator[AssistantContentDeltaDict]:
     """Adapter: consume sdk_stream() and yield ChatLog deltas.
 
     Side-effects: records session/result metadata onto `state`. The
