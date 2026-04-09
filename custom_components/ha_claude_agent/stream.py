@@ -80,12 +80,18 @@ async def parse_sse_stream(
 def from_jsonable(obj: Any) -> Any:
     """Reconstruct SDK dataclass instances from a JSON-friendly payload.
 
-    This is the inverse of the add-on's `to_jsonable()` walker. Dicts with
-    a `_type` key are looked up as classes in `claude_agent_sdk` and
-    instantiated recursively. Unknown classes fall back to a plain dict
-    with the `_type` key stripped. Unknown fields on a known class are
-    dropped with a debug log, so minor SDK version drift between the
-    add-on and the integration is tolerated.
+    This is the inverse of the add-on's `to_jsonable()` walker in
+    ``ha_claude_agent_addon/src/serialization.py``. Dicts with a ``_type``
+    key are looked up as classes in ``claude_agent_sdk`` and instantiated
+    recursively. Unknown classes fall back to a plain dict with the
+    ``_type`` key stripped. Unknown fields on a known class are dropped
+    with a debug log, so minor SDK version drift between the add-on and
+    the integration is tolerated.
+
+    Wire-protocol contract: the ``_type`` key name is part of the wire
+    format shared with the add-on's ``to_jsonable``. Both sides must agree
+    — changing it on only one side will silently stop reconstructing
+    dataclasses.
     """
     if isinstance(obj, dict):
         if "_type" in obj:

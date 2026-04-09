@@ -4,6 +4,12 @@ The add-on forwards Claude Agent SDK messages to the integration over SSE.
 Each SDK message is a `@dataclass` — we walk it recursively, injecting a
 `_type` field on every dataclass instance so the integration can reconstruct
 the original class on the other side of the wire.
+
+Wire-protocol contract: the `_type` key name is part of the wire format
+shared with ``custom_components/ha_claude_agent/stream.py``'s
+``from_jsonable``. Do not rename it on one side without updating the other
+— the integration will silently stop reconstructing dataclasses and the
+consumer will only see raw dicts.
 """
 
 from __future__ import annotations
