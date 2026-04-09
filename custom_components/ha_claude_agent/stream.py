@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from typing import Any, Protocol
 
 import claude_agent_sdk
@@ -18,14 +18,14 @@ import claude_agent_sdk
 _LOGGER = logging.getLogger(__name__)
 
 
-class _SSEResponse(Protocol):
+class SSEResponse(Protocol):
     """Minimal duck-typed interface for the aiohttp response we consume."""
 
     content: AsyncIterable[bytes]
 
 
 async def parse_sse_stream(
-    resp: _SSEResponse,
+    resp: SSEResponse,
 ) -> AsyncGenerator[tuple[str, dict[str, Any]]]:
     """Parse an SSE stream into (event_type, data_dict) tuples.
 
@@ -178,7 +178,7 @@ def reconstruct_exception(payload: dict[str, Any]) -> BaseException:
     return exc
 
 
-async def sdk_stream(resp: _SSEResponse) -> AsyncGenerator[Any]:
+async def sdk_stream(resp: SSEResponse) -> AsyncIterator[Any]:
     """Consume the add-on's SSE stream, yielding SDK message instances.
 
     For each `Message`-typed event, yields the reconstructed SDK dataclass
@@ -189,6 +189,10 @@ async def sdk_stream(resp: _SSEResponse) -> AsyncGenerator[Any]:
     If the add-on emits a `_type` that isn't a known SDK class, the raw
     dict is yielded; the consumer's `match` statement will naturally fall
     through its `case _:` arm without crashing.
+
+    Note: malformed events (bad JSON in the payload) are silently
+    skipped by the underlying SSE parser; in the degenerate case of
+    a malformed exception event, the stream ends without raising.
     """
     async for event_type, data in parse_sse_stream(resp):
         if event_type == "exception":
