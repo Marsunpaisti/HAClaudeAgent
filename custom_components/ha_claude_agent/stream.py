@@ -7,10 +7,13 @@ SDK dataclass instances and real SDK exception classes, so that
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any, Protocol
+
+import claude_agent_sdk
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,3 +75,55 @@ async def parse_sse_stream(
         else:
             if isinstance(data, dict):
                 yield event_type, data
+
+
+def from_jsonable(obj: Any) -> Any:
+    """Reconstruct SDK dataclass instances from a JSON-friendly payload.
+
+    This is the inverse of the add-on's `to_jsonable()` walker. Dicts with
+    a `_type` key are looked up as classes in `claude_agent_sdk` and
+    instantiated recursively. Unknown classes fall back to a plain dict
+    with the `_type` key stripped. Unknown fields on a known class are
+    dropped with a debug log, so minor SDK version drift between the
+    add-on and the integration is tolerated.
+    """
+    if isinstance(obj, dict):
+        if "_type" in obj:
+            cls_name = obj["_type"]
+            fields_payload = {
+                k: from_jsonable(v) for k, v in obj.items() if k != "_type"
+            }
+            cls = getattr(claude_agent_sdk, cls_name, None)
+            if cls is None or not (
+                isinstance(cls, type) and dataclasses.is_dataclass(cls)
+            ):
+                _LOGGER.debug(
+                    "Unknown SDK class %r in stream payload; returning raw dict",
+                    cls_name,
+                )
+                return fields_payload
+
+            known_field_names = {f.name for f in dataclasses.fields(cls)}
+            accepted = {
+                k: v for k, v in fields_payload.items() if k in known_field_names
+            }
+            dropped = set(fields_payload) - known_field_names
+            if dropped:
+                _LOGGER.debug(
+                    "Dropping unknown fields %s from %s payload (SDK version skew?)",
+                    dropped,
+                    cls_name,
+                )
+            try:
+                return cls(**accepted)
+            except TypeError as err:
+                _LOGGER.warning(
+                    "Failed to reconstruct %s: %s; returning raw dict",
+                    cls_name,
+                    err,
+                )
+                return fields_payload
+        return {k: from_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [from_jsonable(x) for x in obj]
+    return obj
