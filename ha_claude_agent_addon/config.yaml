@@ -18,7 +18,5 @@ options:
 schema:
   auth_token: password
 init: false
-startup: application
-boot: auto
 map:
   - addon_config:rw

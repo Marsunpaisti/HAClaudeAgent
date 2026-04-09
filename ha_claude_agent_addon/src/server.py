@@ -1,7 +1,8 @@
 """HTTP server for the HA Claude Agent add-on.
 
 Exposes POST /query which runs a Claude Agent SDK query and returns
-the result as JSON. Designed to be called by the HA custom integration.
+the result as a Server-Sent Events stream. Designed to be called by
+the HA custom integration.
 """
 
 from __future__ import annotations
@@ -10,25 +11,27 @@ import json
 import logging
 import os
 import sys
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from claude_agent_sdk import (
-    AssistantMessage,
+    ClaudeAgentOptions,
     CLIConnectionError,
     CLIJSONDecodeError,
     CLINotFoundError,
-    ClaudeAgentOptions,
     ProcessError,
     ResultMessage,
     SystemMessage,
-    TextBlock,
     create_sdk_mcp_server,
     query,
 )
+from claude_agent_sdk.types import StreamEvent
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from ha_client import HAClient
-from models import QueryRequest, QueryResponse
+from models import QueryRequest
 from tools import create_ha_tools
 
 logging.basicConfig(
@@ -41,7 +44,7 @@ _LOGGER = logging.getLogger(__name__)
 MCP_SERVER_NAME = "homeassistant"
 ADDON_OPTIONS_PATH = "/data/options.json"
 DEFAULT_PORT = 8099
-API_VERSION = 1
+API_VERSION = 2
 
 
 def _read_addon_options() -> dict:
@@ -65,6 +68,11 @@ def _build_auth_env(auth_token: str) -> dict[str, str]:
     return {"CLAUDE_CODE_OAUTH_TOKEN": auth_token}
 
 
+def _sse_event(event_type: str, data: dict[str, Any]) -> str:
+    """Format an SSE event as a wire-protocol string."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and clean up shared resources."""
@@ -74,7 +82,9 @@ async def lifespan(app: FastAPI):
     app.state.auth_env = _build_auth_env(auth_token)
     if app.state.auth_env:
         env_key = next(iter(app.state.auth_env))
-        _LOGGER.info("Auth configured: %s=%s...%s", env_key, auth_token[:7], auth_token[-4:])
+        _LOGGER.info(
+            "Auth configured: %s=%s...%s", env_key, auth_token[:7], auth_token[-4:]
+        )
     else:
         _LOGGER.warning("No auth_token configured — queries will fail")
 
@@ -106,9 +116,12 @@ async def health():
     return {"status": "ok", "api_version": API_VERSION}
 
 
-@app.post("/query", response_model=QueryResponse)
-async def handle_query(body: QueryRequest) -> QueryResponse:
-    """Run a Claude Agent SDK query and return the result."""
+async def _stream_query(
+    body: QueryRequest,
+    auth_env: dict[str, str],
+    ha_client: HAClient,
+) -> AsyncGenerator[str]:
+    """Run the SDK query and yield SSE-formatted strings."""
     _LOGGER.info(
         "Query: model=%s, effort=%s, max_turns=%d, resume=%s",
         body.model,
@@ -116,9 +129,6 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
         body.max_turns,
         body.session_id is not None,
     )
-
-    auth_env: dict[str, str] = app.state.auth_env
-    ha_client: HAClient = app.state.ha_client
 
     try:
         mcp_tools = create_ha_tools(ha_client, body.exposed_entities)
@@ -146,111 +156,115 @@ async def handle_query(body: QueryRequest) -> QueryResponse:
             env=auth_env,
             permission_mode="dontAsk",
             effort=body.effort,
+            include_partial_messages=True,
             stderr=lambda line: _LOGGER.warning("CLI stderr: %s", line),
         )
 
         if body.session_id:
             options.resume = body.session_id
 
-        new_session_id: str | None = None
-        text_parts: list[str] = []
-        result_text = ""
-        error_code: str | None = None
-        cost_usd: float | None = None
-        num_turns: int | None = None
-
         async for message in query(prompt=body.prompt, options=options):
             if isinstance(message, SystemMessage) and message.subtype == "init":
-                new_session_id = message.data.get("session_id")
-                _LOGGER.info("Session started: %s", new_session_id)
+                session_id = message.data.get("session_id")
+                _LOGGER.info("Session started: %s", session_id)
+                yield _sse_event("session", {"session_id": session_id})
 
-            elif isinstance(message, AssistantMessage):
-                if message.error:
-                    error_code = message.error
-                    _LOGGER.warning("Assistant error: %s", message.error)
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        text_parts.append(block.text)
-                    elif hasattr(block, "name"):
-                        _LOGGER.info("Tool call: %s", block.name)
+            elif isinstance(message, StreamEvent):
+                # Forward the raw Anthropic stream event dict as-is.
+                yield _sse_event("stream", message.event)
 
             elif isinstance(message, ResultMessage):
-                if message.session_id:
-                    new_session_id = message.session_id
-                cost_usd = message.total_cost_usd
-                num_turns = message.num_turns
+                error_code: str | None = None
+                if message.subtype != "success":
+                    error_code = message.subtype
                 _LOGGER.info(
                     "Result: subtype=%s, turns=%s, cost=$%s",
                     message.subtype,
-                    num_turns,
-                    cost_usd,
+                    message.num_turns,
+                    message.total_cost_usd,
                 )
-                if message.subtype == "success":
-                    result_text = message.result or ""
-                else:
-                    error_code = message.subtype
-                    errors = getattr(message, "errors", [])
-                    result_text = "; ".join(errors) if errors else message.subtype
+                yield _sse_event(
+                    "result",
+                    {
+                        "session_id": message.session_id,
+                        "cost_usd": message.total_cost_usd,
+                        "num_turns": message.num_turns,
+                        "error_code": error_code,
+                    },
+                )
 
-        if not result_text and text_parts:
-            _LOGGER.warning(
-                "No ResultMessage text, falling back to accumulated text blocks"
-            )
-            result_text = "\n\n".join(text_parts)
-
-        if not result_text and error_code:
-            result_text = f"Claude error: {error_code}"
+            # AssistantMessage is intentionally skipped: the content was
+            # already streamed via StreamEvent, and we don't need the
+            # aggregated copy.
 
     except CLINotFoundError:
         _LOGGER.error("Claude Code CLI not found in container")
-        return QueryResponse(
-            error_code="cli_not_found",
-            result_text=(
-                "Claude Code CLI not found in the add-on container. "
-                "The add-on image may need to be rebuilt."
-            ),
+        yield _sse_event(
+            "error",
+            {
+                "error_code": "cli_not_found",
+                "message": (
+                    "Claude Code CLI not found in the add-on container. "
+                    "The add-on image may need to be rebuilt."
+                ),
+            },
         )
 
     except ProcessError as err:
         _LOGGER.error("CLI process failed (exit %s): %s", err.exit_code, err)
-        return QueryResponse(
-            error_code="process_error",
-            result_text=(
-                f"Claude Code process crashed (exit code {err.exit_code}). "
-                "Check the add-on logs for details."
-            ),
+        yield _sse_event(
+            "error",
+            {
+                "error_code": "process_error",
+                "message": (
+                    f"Claude Code process crashed (exit code {err.exit_code}). "
+                    "Check the add-on logs for details."
+                ),
+            },
         )
 
     except CLIConnectionError as err:
         _LOGGER.error("CLI connection error: %s", err)
-        return QueryResponse(
-            error_code="cli_connection_error",
-            result_text=(
-                "Could not connect to Claude Code CLI. "
-                "Check the add-on logs for details."
-            ),
+        yield _sse_event(
+            "error",
+            {
+                "error_code": "cli_connection_error",
+                "message": (
+                    "Could not connect to Claude Code CLI. "
+                    "Check the add-on logs for details."
+                ),
+            },
         )
 
     except CLIJSONDecodeError as err:
         _LOGGER.error("Failed to parse CLI response: %s", err)
-        return QueryResponse(
-            error_code="parse_error",
-            result_text="Received an invalid response from Claude Code.",
+        yield _sse_event(
+            "error",
+            {
+                "error_code": "parse_error",
+                "message": "Received an invalid response from Claude Code.",
+            },
         )
 
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001
         _LOGGER.exception("Unexpected error during query")
-        return QueryResponse(
-            error_code="internal_error",
-            result_text=f"An unexpected error occurred in the add-on: {err}",
+        yield _sse_event(
+            "error",
+            {
+                "error_code": "internal_error",
+                "message": f"An unexpected error occurred in the add-on: {err}",
+            },
         )
 
-    return QueryResponse(
-        result_text=result_text or None,
-        session_id=new_session_id,
-        cost_usd=cost_usd,
-        num_turns=num_turns,
-        error_code=error_code,
+
+@app.post("/query")
+async def handle_query(body: QueryRequest) -> StreamingResponse:
+    """Run a Claude Agent SDK query and stream the result as SSE."""
+    auth_env: dict[str, str] = app.state.auth_env
+    ha_client: HAClient = app.state.ha_client
+    return StreamingResponse(
+        _stream_query(body, auth_env, ha_client),
+        media_type="text/event-stream",
     )
 
 
