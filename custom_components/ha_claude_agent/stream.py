@@ -141,27 +141,38 @@ def reconstruct_exception(payload: dict[str, Any]) -> BaseException:
     Unknown class names or non-exception classes fall back to a plain
     `ClaudeSDKError` with a composed message, so the integration's
     `except ClaudeSDKError` handler always catches the result.
+
+    Known limitation: `MessageParseError` is defined in
+    `claude_agent_sdk._errors` but not exported from the package's
+    top-level namespace in SDK 0.1.56. Any forwarded `MessageParseError`
+    silently degrades to `ClaudeSDKError` here. The integration's
+    generic `ClaudeSDKError` handler still catches it.
     """
     cls_name = payload.get("_type", "")
     message = payload.get("message", "")
-    attrs = payload.get("attrs") or {}
+    attrs = payload.get("attrs")
+    if not isinstance(attrs, dict):
+        attrs = {}
 
     cls = getattr(claude_agent_sdk, cls_name, None)
-    if not (
-        isinstance(cls, type)
-        and issubclass(cls, BaseException)
-        and issubclass(cls, claude_agent_sdk.ClaudeSDKError)
-    ):
+    if not (isinstance(cls, type) and issubclass(cls, claude_agent_sdk.ClaudeSDKError)):
         composed = f"{cls_name}: {message}" if cls_name else message
         return claude_agent_sdk.ClaudeSDKError(composed)
 
     exc = cls.__new__(cls)
+    # Call Exception.__init__ directly (not cls.__init__) because SDK exception
+    # subclasses have varying constructor signatures (e.g. CLIJSONDecodeError
+    # requires `line, original_error`). Setting args=(message,) via Exception's
+    # base __init__ gives us a valid exception whose str() returns the message.
     Exception.__init__(exc, message)
     for key, value in attrs.items():
         try:
             setattr(exc, key, value)
         except (AttributeError, TypeError):
             _LOGGER.debug(
-                "Could not restore attr %s on reconstructed %s", key, cls_name
+                "Could not restore attr %s=%r on reconstructed %s",
+                key,
+                value,
+                cls_name,
             )
     return exc
