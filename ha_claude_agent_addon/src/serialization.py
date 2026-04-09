@@ -49,22 +49,39 @@ def exception_to_dict(err: BaseException) -> dict[str, Any]:
 
     Serializes all public instance attributes (anything in `vars(err)` that
     doesn't start with an underscore). Attributes that can't be serialized
-    to JSON fall back to their `repr()` form — this preserves debugging
-    information for things like `CLIJSONDecodeError.original_error` which
-    is itself an Exception.
+    to valid JSON fall back to their `repr()` form — this preserves
+    debugging information for things like `CLIJSONDecodeError.original_error`
+    which is itself an Exception. NaN and infinity float values also fall
+    back to their `repr()` form because they are not valid JSON.
+
+    The function is designed to be called from inside an exception handler
+    and never raises — even if the exception's `vars()` or an attribute's
+    `__repr__` itself misbehaves, a placeholder string is substituted.
+
+    Note: attributes stored on `__slots__` (rather than `__dict__`) are
+    invisible to this function. None of the SDK exceptions currently use
+    `__slots__`, so this is acceptable as a known limitation.
 
     The formatted traceback is included as a string so the integration can
     log the add-on-side stack trace when re-raising.
     """
     safe_attrs: dict[str, Any] = {}
-    for key, value in vars(err).items():
+    try:
+        attrs_source = vars(err)
+    except Exception:  # noqa: BLE001
+        attrs_source = {}
+
+    for key, value in attrs_source.items():
         if key.startswith("_"):
             continue
         try:
-            json.dumps(value)
+            json.dumps(value, allow_nan=False)
             safe_attrs[key] = value
         except (TypeError, ValueError):
-            safe_attrs[key] = repr(value)
+            try:
+                safe_attrs[key] = repr(value)
+            except Exception:  # noqa: BLE001
+                safe_attrs[key] = f"<unrepresentable {type(value).__name__}>"
 
     return {
         "_type": type(err).__name__,

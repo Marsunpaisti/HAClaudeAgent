@@ -189,3 +189,74 @@ def test_exception_to_dict_skips_dunder_and_underscore_attrs():
 
     payload = exception_to_dict(AnnotatedError())
     assert payload["attrs"] == {"public": "keep"}
+
+
+def test_exception_to_dict_nan_float_attr_falls_back_to_repr():
+    from serialization import exception_to_dict
+
+    class NaNError(Exception):
+        def __init__(self):
+            super().__init__("nan err")
+            self.bad_float = float("nan")
+
+    payload = exception_to_dict(NaNError())
+    # NaN is not valid JSON; must fall back to repr
+    assert isinstance(payload["attrs"]["bad_float"], str)
+    assert "nan" in payload["attrs"]["bad_float"].lower()
+
+
+def test_exception_to_dict_handles_repr_that_raises():
+    from serialization import exception_to_dict
+
+    class UnreprableValue:
+        def __repr__(self):
+            raise RuntimeError("repr is broken")
+
+    class HostileError(Exception):
+        def __init__(self):
+            super().__init__("hostile")
+            self.weapon = UnreprableValue()
+
+    # Must not raise
+    payload = exception_to_dict(HostileError())
+    assert "<unrepresentable UnreprableValue>" in payload["attrs"]["weapon"]
+
+
+def test_exception_to_dict_handles_vars_that_raises():
+    from serialization import exception_to_dict
+
+    class NoVarsError(Exception):
+        @property
+        def __dict__(self):
+            raise RuntimeError("no dict for you")
+
+    err = NoVarsError("ouch")
+    # Must not raise; attrs must be empty
+    payload = exception_to_dict(err)
+    assert payload["attrs"] == {}
+    assert payload["_type"] == "NoVarsError"
+    assert payload["message"] == "ouch"
+
+
+def test_exception_to_dict_output_is_strict_json():
+    """The whole payload must be parseable as strict (RFC 8259) JSON."""
+    import json as _json
+
+    from serialization import exception_to_dict
+
+    class MixedError(Exception):
+        def __init__(self):
+            super().__init__("mixed")
+            self.ok = "string value"
+            self.also_ok = [1, 2, 3]
+            self.bad = float("inf")
+
+    payload = exception_to_dict(MixedError())
+    serialized = _json.dumps(payload, allow_nan=False)
+    reparsed = _json.loads(serialized)
+
+    assert reparsed["_type"] == "MixedError"
+    assert reparsed["attrs"]["ok"] == "string value"
+    assert reparsed["attrs"]["also_ok"] == [1, 2, 3]
+    # bad was inf → fell back to repr → string
+    assert isinstance(reparsed["attrs"]["bad"], str)
