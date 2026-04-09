@@ -6,6 +6,7 @@
   "dependencies": ["conversation"],
   "documentation": "https://github.com/Marsunpaisti/HAClaudeAgent",
   "integration_type": "service",
+  "issue_tracker": "https://github.com/Marsunpaisti/HAClaudeAgent/issues",
   "iot_class": "cloud_polling",
   "requirements": [],
   "version": "0.5.0"
