@@ -47,12 +47,13 @@ Cache-read and cache-write tokens are both included because they are free to ext
 ### New files
 
 - `custom_components/ha_claude_agent/sensor.py` — the sensor platform.
+- `custom_components/ha_claude_agent/usage.py` — `UsagePayload` dataclass and the `_usage_from_result` pure helper. A dedicated module instead of stuffing these into `const.py` or `conversation.py` because: (a) `conversation.py` transitively imports `homeassistant.components.conversation` which fails to import in the test environment (missing `hassil`), making any test against it impossible; (b) a pure, HA-free module is trivially unit-testable; (c) `const.py` is conventionally for constants, and dataclasses + helpers don't belong there.
 
 ### Modified files
 
 - `custom_components/ha_claude_agent/__init__.py` — add `Platform.SENSOR` to platform forwarding.
-- `custom_components/ha_claude_agent/const.py` — add `SIGNAL_USAGE_UPDATED` constant and `UsagePayload` dataclass.
-- `custom_components/ha_claude_agent/conversation.py` — extend `_StreamResult` to capture `usage` dict, extract it in the `ResultMessage` match arm, dispatch `SIGNAL_USAGE_UPDATED` after the stream completes.
+- `custom_components/ha_claude_agent/const.py` — add `SIGNAL_USAGE_UPDATED` constant.
+- `custom_components/ha_claude_agent/conversation.py` — extend `_StreamResult` to capture `usage` dict, extract it in the `ResultMessage` match arm, import `UsagePayload` and `_usage_from_result` from `usage.py`, dispatch `SIGNAL_USAGE_UPDATED` after the stream completes.
 - `custom_components/ha_claude_agent/strings.json` + `translations/en.json` — five entity translation keys.
 
 ### Platform load order
@@ -80,7 +81,7 @@ This follows the idiomatic HA core pattern for intra-integration fan-out (used b
 
 ### `UsagePayload` dataclass
 
-Lives in `const.py` (avoids module sprawl for one small dataclass):
+Lives in the new `usage.py` module alongside the helper. Has no HA imports — only `dataclasses` and `claude_agent_sdk.ResultMessage` (for the helper's type hint).
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -98,7 +99,7 @@ class UsagePayload:
 
 ### `_usage_from_result(result: ResultMessage) -> UsagePayload`
 
-Pure helper in `conversation.py`. Normalises the SDK's loosely typed output:
+Pure helper in `usage.py`. Normalises the SDK's loosely typed output:
 
 - `result.total_cost_usd` can be `None` (SDK paths vary) → defaults to `0.0`.
 - `result.usage` can be `None` → defaults to `{}`.
@@ -267,13 +268,14 @@ The add-on is unmodified — no add-on test changes required.
 ### New
 
 - `custom_components/ha_claude_agent/sensor.py` — the sensor platform and the `HAClaudeAgentUsageCounterSensor` class.
+- `custom_components/ha_claude_agent/usage.py` — `UsagePayload` dataclass and `_usage_from_result` helper.
 - `tests/test_usage.py` — unit tests for `_usage_from_result` and the sensor callback logic (no `hass` fixture required).
 
 ### Modified
 
 - `custom_components/ha_claude_agent/__init__.py` — `PLATFORMS = [Platform.SENSOR, Platform.CONVERSATION]`
-- `custom_components/ha_claude_agent/const.py` — `SIGNAL_USAGE_UPDATED`, `UsagePayload`
-- `custom_components/ha_claude_agent/conversation.py` — extend `_StreamResult` with usage fields, extract usage dict in the `ResultMessage` match arm, dispatch `SIGNAL_USAGE_UPDATED` after stream completes (only when usage/cost was received)
+- `custom_components/ha_claude_agent/const.py` — `SIGNAL_USAGE_UPDATED`
+- `custom_components/ha_claude_agent/conversation.py` — import `UsagePayload`/`_usage_from_result` from `usage.py`, extend `_StreamResult` with usage fields, extract usage dict in the `ResultMessage` match arm, dispatch `SIGNAL_USAGE_UPDATED` after stream completes (only when usage/cost was received)
 - `custom_components/ha_claude_agent/strings.json` — five new entity translation keys under a new `sensor` section
 - `custom_components/ha_claude_agent/translations/en.json` — English text for the five keys
 
