@@ -23,7 +23,10 @@ from .const import (
 )
 from .helpers import async_reverse_geocode
 
-PLATFORMS = [Platform.CONVERSATION]
+# SENSOR is first so its async_setup_entry runs before CONVERSATION
+# attempts to dispatch usage signals — minimises the startup-race window
+# where a turn could complete before sensors are subscribed.
+PLATFORMS = [Platform.SENSOR, Platform.CONVERSATION]
 
 _LOGGER = logging.getLogger(__name__)
 
