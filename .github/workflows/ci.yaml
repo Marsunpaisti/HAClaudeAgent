@@ -9,9 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v6
+      # setup-uv stopped publishing floating major/minor tags at v8 — pin exact.
+      - uses: astral-sh/setup-uv@v8.0.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
