@@ -77,7 +77,9 @@ async def test_parse_sse_stream_ignores_comment_lines():
 
 
 @pytest.mark.asyncio
-async def test_parse_sse_stream_skips_malformed_json():
+async def test_parse_sse_stream_yields_none_for_malformed_json():
+    """Bad JSON payloads surface as (event_type, None) so callers can
+    distinguish 'event arrived with bad payload' from 'no event at all'."""
     resp = _FakeResponse(
         [
             b"event: bad\n",
@@ -89,11 +91,12 @@ async def test_parse_sse_stream_skips_malformed_json():
         ]
     )
     events = [evt async for evt in parse_sse_stream(resp)]
-    assert events == [("good", {"ok": True})]
+    assert events == [("bad", None), ("good", {"ok": True})]
 
 
 @pytest.mark.asyncio
-async def test_parse_sse_stream_skips_events_missing_data():
+async def test_parse_sse_stream_yields_none_for_events_missing_data():
+    """An event header with no data line still yields (event_type, None)."""
     resp = _FakeResponse(
         [
             b"event: orphan\n",
@@ -104,7 +107,25 @@ async def test_parse_sse_stream_skips_events_missing_data():
         ]
     )
     events = [evt async for evt in parse_sse_stream(resp)]
-    assert events == [("good", {"ok": True})]
+    assert events == [("orphan", None), ("good", {"ok": True})]
+
+
+@pytest.mark.asyncio
+async def test_parse_sse_stream_yields_none_for_non_object_json():
+    """A `data:` payload that parses to a scalar or list is not a valid
+    message envelope and surfaces as None."""
+    resp = _FakeResponse(
+        [
+            b"event: scalar\n",
+            b"data: 42\n",
+            b"\n",
+            b"event: list\n",
+            b"data: [1, 2]\n",
+            b"\n",
+        ]
+    )
+    events = [evt async for evt in parse_sse_stream(resp)]
+    assert events == [("scalar", None), ("list", None)]
 
 
 @pytest.mark.asyncio
@@ -266,6 +287,107 @@ def test_from_jsonable_tolerates_unknown_fields():
     result = from_jsonable(payload)
     assert isinstance(result, TextBlock)
     assert result.text == "hello"
+
+
+def test_from_jsonable_reconstructs_thinking_block():
+    """ThinkingBlock has a required `signature` field; must round-trip."""
+    from claude_agent_sdk import ThinkingBlock
+
+    payload = {
+        "_type": "ThinkingBlock",
+        "thinking": "deliberating...",
+        "signature": "sig-abc",
+    }
+    result = from_jsonable(payload)
+    assert isinstance(result, ThinkingBlock)
+    assert result.thinking == "deliberating..."
+    assert result.signature == "sig-abc"
+
+
+def test_from_jsonable_reconstructs_result_message_with_session_and_cost():
+    """ResultMessage is load-bearing: carries session_id, cost, and error
+    subtype that conversation.py extracts. Guard against shape regression."""
+    from claude_agent_sdk import ResultMessage
+
+    payload = {
+        "_type": "ResultMessage",
+        "subtype": "success",
+        "duration_ms": 1234,
+        "duration_api_ms": 1100,
+        "is_error": False,
+        "num_turns": 3,
+        "session_id": "session-42",
+        "stop_reason": "end_turn",
+        "total_cost_usd": 0.0125,
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+        "result": "done",
+        "structured_output": None,
+        "model_usage": None,
+        "permission_denials": None,
+        "errors": None,
+        "uuid": "uuid-1",
+    }
+    result = from_jsonable(payload)
+    assert isinstance(result, ResultMessage)
+    assert result.subtype == "success"
+    assert result.session_id == "session-42"
+    assert result.total_cost_usd == 0.0125
+    assert result.num_turns == 3
+    assert result.duration_ms == 1234
+
+
+def test_from_jsonable_reconstructs_rate_limit_event_with_nested_info():
+    """RateLimitEvent is the only SDK message type with a nested dataclass
+    field (rate_limit_info: RateLimitInfo). Exercises the recursive path."""
+    from claude_agent_sdk import RateLimitEvent, RateLimitInfo
+
+    payload = {
+        "_type": "RateLimitEvent",
+        "rate_limit_info": {
+            "_type": "RateLimitInfo",
+            "status": "allowed_warning",
+            "resets_at": 1700000000,
+            "rate_limit_type": "five_hour",
+            "utilization": 0.87,
+            "overage_status": None,
+            "overage_resets_at": None,
+            "overage_disabled_reason": None,
+            "raw": {"foo": "bar"},
+        },
+        "uuid": "uuid-rl",
+        "session_id": "s1",
+    }
+    result = from_jsonable(payload)
+    assert isinstance(result, RateLimitEvent)
+    assert result.session_id == "s1"
+    assert isinstance(result.rate_limit_info, RateLimitInfo)
+    assert result.rate_limit_info.status == "allowed_warning"
+    assert result.rate_limit_info.utilization == 0.87
+    assert result.rate_limit_info.rate_limit_type == "five_hour"
+    assert result.rate_limit_info.raw == {"foo": "bar"}
+
+
+def test_from_jsonable_falls_back_when_required_field_missing():
+    """If the add-on sends a known class but omits a field that the local
+    SDK marks as required (version skew in the other direction), cls(**accepted)
+    raises TypeError and we degrade to a raw dict — the match statement in
+    conversation.py will fall through to `case _: pass`."""
+    # ResultMessage requires subtype, duration_ms, duration_api_ms, is_error,
+    # num_turns, session_id — omit num_turns to simulate the skew.
+    payload = {
+        "_type": "ResultMessage",
+        "subtype": "success",
+        "duration_ms": 100,
+        "duration_api_ms": 90,
+        "is_error": False,
+        # num_turns missing
+        "session_id": "s1",
+    }
+    result = from_jsonable(payload)
+    # Falls back to a raw dict with _type stripped
+    assert isinstance(result, dict)
+    assert "_type" not in result
+    assert result["session_id"] == "s1"
 
 
 def test_reconstruct_exception_cli_not_found():
@@ -445,6 +567,68 @@ async def test_sdk_stream_yields_messages_then_raises_on_trailing_exception():
 
     assert len(seen) == 1
     assert isinstance(seen[0], StreamEvent)
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_raises_on_malformed_exception_event():
+    """An `exception` header with an unreadable payload MUST surface as
+    an error, not be silently dropped. Otherwise the consumer treats
+    the turn as a truncated success and the user sees "I have no response."
+    """
+    from claude_agent_sdk import ClaudeSDKError
+
+    resp = _FakeResponse(
+        [
+            b"event: exception\n",
+            b"data: not-valid-json\n",
+            b"\n",
+        ]
+    )
+
+    with pytest.raises(ClaudeSDKError, match="Malformed exception event"):
+        async for _ in sdk_stream(resp):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_raises_on_exception_event_with_missing_data():
+    """Same as above but for an `exception` header with no data line at all."""
+    from claude_agent_sdk import ClaudeSDKError
+
+    resp = _FakeResponse(
+        [
+            b"event: exception\n",
+            b"\n",
+        ]
+    )
+
+    with pytest.raises(ClaudeSDKError, match="Malformed exception event"):
+        async for _ in sdk_stream(resp):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_skips_non_exception_events_with_bad_payload():
+    """A malformed non-exception event should be skipped so the rest of
+    the stream can proceed — only the exception channel is load-bearing."""
+    from claude_agent_sdk import StreamEvent
+
+    resp = _FakeResponse(
+        [
+            b"event: StreamEvent\n",
+            b"data: not-json\n",
+            b"\n",
+            b"event: StreamEvent\n",
+            b'data: {"_type": "StreamEvent", "uuid": "u2", "session_id": "s1", '
+            b'"event": {"type": "content_block_delta", "delta": {"text": "ok"}}, '
+            b'"parent_tool_use_id": null}\n',
+            b"\n",
+        ]
+    )
+    messages = [m async for m in sdk_stream(resp)]
+    assert len(messages) == 1
+    assert isinstance(messages[0], StreamEvent)
+    assert messages[0].session_id == "s1"
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any, Protocol
 
 import claude_agent_sdk
@@ -24,13 +24,38 @@ class SSEResponse(Protocol):
     content: AsyncIterable[bytes]
 
 
+def _decode_event_data(event_type: str, data_line: str) -> dict[str, Any] | None:
+    """Decode an SSE `data:` payload; return None if malformed."""
+    try:
+        data = json.loads(data_line)
+    except json.JSONDecodeError:
+        _LOGGER.warning(
+            "Bad SSE data payload for event %s: %r",
+            event_type,
+            data_line,
+        )
+        return None
+    if not isinstance(data, dict):
+        _LOGGER.warning(
+            "SSE data payload for event %s is not a JSON object: %r",
+            event_type,
+            data,
+        )
+        return None
+    return data
+
+
 async def parse_sse_stream(
     resp: SSEResponse,
-) -> AsyncGenerator[tuple[str, dict[str, Any]]]:
-    """Parse an SSE stream into (event_type, data_dict) tuples.
+) -> AsyncIterator[tuple[str, dict[str, Any] | None]]:
+    """Parse an SSE stream into (event_type, data_dict_or_none) tuples.
 
-    Yields one tuple per completed event. Events without both a valid
-    `event:` line and a parseable `data:` line are silently skipped.
+    Yields one tuple per completed event whose `event:` header was seen.
+    If the accompanying `data:` payload is missing, unparseable, or not a
+    JSON object, the second element is ``None``; callers can distinguish
+    "event arrived but payload was bad" from "event never arrived." This
+    matters for the exception channel: an ``exception`` event with a
+    broken payload must still surface as an error, not be silently dropped.
     """
     event_type: str | None = None
     data_line: str | None = None
@@ -38,18 +63,13 @@ async def parse_sse_stream(
     async for raw_line in resp.content:
         line = raw_line.decode("utf-8").rstrip("\r\n")
         if line == "":
-            if event_type is not None and data_line is not None:
-                try:
-                    data = json.loads(data_line)
-                except json.JSONDecodeError:
-                    _LOGGER.warning(
-                        "Bad SSE data payload for event %s: %r",
-                        event_type,
-                        data_line,
-                    )
-                else:
-                    if isinstance(data, dict):
-                        yield event_type, data
+            if event_type is not None:
+                data = (
+                    _decode_event_data(event_type, data_line)
+                    if data_line is not None
+                    else None
+                )
+                yield event_type, data
             event_type = None
             data_line = None
             continue
@@ -63,18 +83,11 @@ async def parse_sse_stream(
     # Flush any partial event buffered when the stream ends without a
     # trailing blank line — e.g. when the add-on closes the connection
     # mid-event after an abrupt failure.
-    if event_type is not None and data_line is not None:
-        try:
-            data = json.loads(data_line)
-        except json.JSONDecodeError:
-            _LOGGER.warning(
-                "Bad SSE data payload for event %s: %r",
-                event_type,
-                data_line,
-            )
-        else:
-            if isinstance(data, dict):
-                yield event_type, data
+    if event_type is not None:
+        data = (
+            _decode_event_data(event_type, data_line) if data_line is not None else None
+        )
+        yield event_type, data
 
 
 def from_jsonable(obj: Any) -> Any:
@@ -99,6 +112,12 @@ def from_jsonable(obj: Any) -> Any:
             fields_payload = {
                 k: from_jsonable(v) for k, v in obj.items() if k != "_type"
             }
+            # Security: class lookup is intentionally narrowed to dataclasses
+            # exported from the `claude_agent_sdk` top-level namespace. The
+            # `is_dataclass` guard rejects non-dataclass exports (e.g. `sys`,
+            # `Any`, `TypeVar`) that currently leak into the namespace, and
+            # the module-scoped lookup keeps a compromised or buggy add-on
+            # response from tricking us into instantiating arbitrary classes.
             cls = getattr(claude_agent_sdk, cls_name, None)
             if cls is None or not (
                 isinstance(cls, type) and dataclasses.is_dataclass(cls)
@@ -148,6 +167,16 @@ def reconstruct_exception(payload: dict[str, Any]) -> BaseException:
     `ClaudeSDKError` with a composed message, so the integration's
     `except ClaudeSDKError` handler always catches the result.
 
+    The wire payload carries a ``module`` field (e.g.
+    ``claude_agent_sdk._errors``) captured from ``type(err).__module__``
+    on the add-on side, but it is deliberately ignored here: lookup is
+    scoped to the public ``claude_agent_sdk`` namespace by class name
+    alone, which is the stable identity we share with callers. Honoring
+    the raw module path would widen the instantiation surface to
+    internal SDK submodules and make version skew harder to reason
+    about, so the field is retained in the wire format only for debug
+    logging.
+
     Known limitation: `MessageParseError` is defined in
     `claude_agent_sdk._errors` but not exported from the package's
     top-level namespace in SDK 0.1.56. Any forwarded `MessageParseError`
@@ -196,12 +225,26 @@ async def sdk_stream(resp: SSEResponse) -> AsyncIterator[Any]:
     dict is yielded; the consumer's `match` statement will naturally fall
     through its `case _:` arm without crashing.
 
-    Note: malformed events (bad JSON in the payload) are silently
-    skipped by the underlying SSE parser; in the degenerate case of
-    a malformed exception event, the stream ends without raising.
+    Malformed events (bad JSON in the payload) are handled explicitly:
+    non-exception events with an unreadable payload are skipped with a
+    warning, but a malformed ``exception`` event raises
+    ``ClaudeSDKError`` so the consumer sees an error rather than a
+    silent truncated success.
     """
     async for event_type, data in parse_sse_stream(resp):
         if event_type == "exception":
+            if data is None:
+                # The add-on emitted an `exception` header but the payload
+                # was unreadable. Surface as a generic SDK error rather
+                # than terminating the stream silently — the consumer
+                # must not mistake this for a successful turn.
+                _LOGGER.error(
+                    "Add-on emitted a malformed exception event; "
+                    "surfacing as ClaudeSDKError"
+                )
+                raise claude_agent_sdk.ClaudeSDKError(
+                    "Malformed exception event from add-on"
+                )
             traceback_text = data.get("traceback", "")
             if traceback_text:
                 _LOGGER.error(
@@ -210,5 +253,10 @@ async def sdk_stream(resp: SSEResponse) -> AsyncIterator[Any]:
                     traceback_text,
                 )
             raise reconstruct_exception(data)
+
+        if data is None:
+            # Non-exception event with a bad payload — already logged
+            # by the parser. Skip so the rest of the stream can proceed.
+            continue
 
         yield from_jsonable(data)

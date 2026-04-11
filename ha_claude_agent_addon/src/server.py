@@ -159,6 +159,13 @@ async def _stream_query(
             options.resume = body.session_id
 
         async for message in query(prompt=body.prompt, options=options):
+            # The SSE `event:` line carries the class name for log
+            # readability, but the integration only consumes it for
+            # "exception" detection (see stream.sdk_stream). Message
+            # type discrimination on the integration side uses the
+            # `_type` field inside the JSON data payload instead, so
+            # the event: name is effectively debug metadata for
+            # message events.
             yield _sse_event(type(message).__name__, to_jsonable(message))
 
     except GeneratorExit:
