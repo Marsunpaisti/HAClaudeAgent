@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
 
+permissions: {}
+
 jobs:
   lint-and-typecheck:
     runs-on: ubuntu-latest
@@ -11,6 +13,8 @@ jobs:
 
       # setup-uv stopped publishing floating major/minor tags at v8 — pin exact.
       - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
 
       - uses: actions/setup-python@v6
         with:
@@ -19,11 +23,11 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Ruff lint
-        run: uv run ruff check custom_components/ ha_claude_agent_addon/src/ tests/
-
-      - name: Ruff format check
-        run: uv run ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+      # Pre-commit is the single source of truth for lint + format + hygiene
+      # (ruff, trailing-whitespace, end-of-file-fixer, check-{json,yaml,toml},
+      # check-merge-conflict). Anything not covered here runs as its own step.
+      - name: Pre-commit
+        run: uv run pre-commit run --all-files --show-diff-on-failure
 
       - name: Mypy (integration)
         run: uv run mypy custom_components/ha_claude_agent/
