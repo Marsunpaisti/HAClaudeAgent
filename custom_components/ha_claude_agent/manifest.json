@@ -8,6 +8,6 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Marsunpaisti/HAClaudeAgent/issues",
-  "requirements": [],
-  "version": "0.5.0"
+  "requirements": ["claude-agent-sdk==0.1.56"],
+  "version": "0.6.0"
 }
