@@ -43,3 +43,8 @@ The users unit system is {{ units }}.
 DEFAULT_MAX_TURNS = 10
 
 QUERY_TIMEOUT_SECONDS = 300
+
+# Dispatcher signal fired by conversation.py after each turn with
+# (subentry_id: str, payload: UsagePayload). Subscribed to by
+# sensor.py for cost/usage counter updates.
+SIGNAL_USAGE_UPDATED = f"{DOMAIN}_usage_updated"
