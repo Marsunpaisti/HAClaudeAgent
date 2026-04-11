@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 import aiohttp
 from claude_agent_sdk import (
@@ -37,6 +38,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import intent
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -50,10 +52,12 @@ from .const import (
     DEFAULT_THINKING_EFFORT,
     DOMAIN,
     QUERY_TIMEOUT_SECONDS,
+    SIGNAL_USAGE_UPDATED,
 )
 from .helpers import build_system_prompt
 from .models import QueryRequest
 from .stream import sdk_stream
+from .usage import UsagePayload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,6 +112,7 @@ class _StreamResult:
     num_turns: int | None = None
     result_error_subtype: str | None = None  # ResultMessage.subtype if != "success"
     assistant_error: str | None = None  # AssistantMessage.error if set
+    usage_dict: dict[str, Any] | None = None  # Raw ResultMessage.usage dict
 
 
 async def async_setup_entry(
@@ -299,6 +304,19 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         if result_state.session_id:
             runtime_data.sessions[chat_log.conversation_id] = result_state.session_id
 
+        # Dispatch usage signal to sensor platform. Fires even on soft errors
+        # (error_max_turns, assistant_error) — the API still billed for those.
+        # cost_usd is the presence proxy: if it is None, no ResultMessage was
+        # received, so there is nothing to record.
+        if result_state.cost_usd is not None:
+            usage_payload = _usage_from_state(result_state)
+            async_dispatcher_send(
+                self.hass,
+                SIGNAL_USAGE_UPDATED,
+                self.subentry.subentry_id,
+                usage_payload,
+            )
+
         # Soft errors: ResultMessage with error subtype, or AssistantMessage.error
         if result_state.result_error_subtype:
             msg = _ERROR_MESSAGES.get(
@@ -365,10 +383,12 @@ async def _deltas_from_sdk_stream(
                 subtype=subtype,
                 total_cost_usd=cost,
                 num_turns=turns,
+                usage=usage_dict,
             ):
                 state.session_id = sid or state.session_id
                 state.cost_usd = cost
                 state.num_turns = turns
+                state.usage_dict = usage_dict
                 if subtype != "success":
                     state.result_error_subtype = subtype
 
@@ -404,3 +424,21 @@ def _delta_from_anthropic_event(
         thinking = delta.get("thinking", "")
         return {"thinking_content": thinking} if thinking else None
     return None
+
+
+def _usage_from_state(state: _StreamResult) -> UsagePayload:
+    """Build a UsagePayload from the already-captured _StreamResult.
+
+    Kept as a small bridge because the pure helper in ``usage.py`` takes
+    a ``ResultMessage``, but at dispatch time we only have the extracted
+    fields. Mirrors the default-handling semantics of ``_usage_from_result``.
+    """
+    usage = state.usage_dict or {}
+    cost = state.cost_usd if state.cost_usd is not None else 0.0
+    return UsagePayload(
+        cost_usd=float(cost),
+        input_tokens=int(usage.get("input_tokens", 0) or 0),
+        output_tokens=int(usage.get("output_tokens", 0) or 0),
+        cache_read_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
+        cache_write_tokens=int(usage.get("cache_creation_input_tokens", 0) or 0),
+    )

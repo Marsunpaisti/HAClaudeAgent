@@ -77,5 +77,24 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "total_cost_usd": {
+        "name": "Total cost"
+      },
+      "total_input_tokens": {
+        "name": "Total input tokens"
+      },
+      "total_output_tokens": {
+        "name": "Total output tokens"
+      },
+      "total_cache_read_tokens": {
+        "name": "Total cache-read tokens"
+      },
+      "total_cache_write_tokens": {
+        "name": "Total cache-write tokens"
+      }
+    }
   }
 }
