@@ -1859,4 +1859,3 @@ Plan complete and saved to `docs/superpowers/plans/2026-04-09-transparent-sdk-fo
 **2. Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints
 
 Which approach?
-

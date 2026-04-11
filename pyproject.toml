@@ -1,6 +1,11 @@
 [project]
 name = "ha-claude-agent"
-version = "0.4.8"
+# NOT the release version. Nothing reads this field in production — HA/HACS
+# read custom_components/ha_claude_agent/manifest.json (authoritative for
+# the integration) and the Supervisor reads ha_claude_agent_addon/config.yaml
+# (authoritative for the add-on). This file only configures the dev
+# environment, so a sentinel value prevents drift on every release cycle.
+version = "0.0.0+dev"
 requires-python = ">=3.13"
 # Dev/CI dependencies — NOT the add-on runtime deps.
 # The add-on has its own requirements.txt (pinned via uv export

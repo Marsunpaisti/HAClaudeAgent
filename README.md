@@ -72,16 +72,48 @@ Example commands:
 - "Set the thermostat to 72 degrees"
 - "What devices are on right now?"
 
-## How It Works
+## Architecture
 
-The system has two parts:
+Two components that work together. The add-on exists because claude-agent-sdk can't be installed on the HAOS host.
 
-- **Integration** (HACS custom component) — registers as a HA conversation agent, builds system prompts with exposed entities, and delegates queries to the add-on via HTTP
-- **Add-on** (Docker container) — runs the Claude Code CLI + Claude Agent SDK, exposes an HTTP API, and proxies HA service calls via MCP tools
+### Integration (HACS custom component)
 
-The system prompt is rebuilt on every turn with current entity states, so Claude always has up-to-date information. Session IDs from the SDK are mapped to HA conversation IDs for multi-turn context.
+- Registers as a HA conversation agent via `ConversationEntity`
+- Builds system prompts with exposed entities and HA context
+- Manages session mapping (conversation_id -> session_id) in a bounded LRU cache
+- Delegates query execution to the add-on
+
+### Add-on (Docker container)
+
+- The add-ons role is to simply wrap claude-agent-sdk in a HTTP api.
+- MCP tools proxy HA service calls via the REST API using `SUPERVISOR_TOKEN`
 
 ## Development
+
+Uses `uv` for dependency management. Two lockfiles:
+
+- `uv.lock` (repo root) — dev environment (HA, linters, type checker)
+- `ha_claude_agent_addon/uv.lock` — add-on runtime (SDK, FastAPI, etc.)
+
+```bash
+uv sync          # install dev dependencies
+```
+
+### Verification
+
+```bash
+uv run ruff check custom_components/ ha_claude_agent_addon/src/ tests/
+uv run ruff format --check custom_components/ ha_claude_agent_addon/src/ tests/
+uv run mypy custom_components/ha_claude_agent/ ha_claude_agent_addon/src/
+uv run pytest tests/ -v
+```
+
+Auto-fix lint and formatting:
+
+```bash
+uv run ruff check --fix custom_components/ ha_claude_agent_addon/src/ tests/
+uv run ruff format custom_components/ ha_claude_agent_addon/src/ tests/
+```
 
 Requires [uv](https://docs.astral.sh/uv/) for dependency management.
 
