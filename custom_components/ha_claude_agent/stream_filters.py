@@ -57,3 +57,53 @@ class StreamingFilterProcessor:
         for f in self._filters:
             buf = f.feed(buf) + f.flush()
         return buf
+
+
+class LineBufferedFilter(StreamFilter):
+    """Base for line-oriented filters.
+
+    Accumulates text until newlines are found, then calls
+    :meth:`_process_line` for each complete line.  Subclasses implement
+    ``_process_line`` and optionally ``_finalize`` for end-of-stream.
+    """
+
+    def __init__(self) -> None:
+        self._line_buffer = ""
+
+    def feed(self, text: str) -> str:
+        self._line_buffer += text
+        output: list[str] = []
+        while (nl := self._line_buffer.find("\n")) != -1:
+            line = self._line_buffer[:nl]
+            self._line_buffer = self._line_buffer[nl + 1 :]
+            result = self._process_line(line)
+            if result is not None:
+                output.append(result + "\n")
+        return "".join(output)
+
+    def flush(self) -> str:
+        output: list[str] = []
+        if self._line_buffer:
+            result = self._process_line(self._line_buffer)
+            if result is not None:
+                output.append(result)
+            self._line_buffer = ""
+        final = self._finalize()
+        if final:
+            output.append(final)
+        return "".join(output)
+
+    @abstractmethod
+    def _process_line(self, line: str) -> str | None:
+        """Process one line (without trailing newline).
+
+        Return the line to emit it, or ``None`` to suppress it.
+        The base class appends ``\\n`` to emitted lines automatically
+        (except for trailing partial lines at flush).
+        """
+
+    def _finalize(self) -> str:
+        """Called at end of stream after the trailing partial line (if any)
+        has been processed.  Override to release held state.
+        """
+        return ""

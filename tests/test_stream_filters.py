@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from custom_components.ha_claude_agent.stream_filters import (
+    LineBufferedFilter,
     StreamFilter,
     StreamingFilterProcessor,
 )
@@ -102,3 +103,90 @@ class TestStreamingFilterProcessor:
         out = proc.feed("data")
         out += proc.flush()
         assert out == "data"
+
+
+# ---------------------------------------------------------------------------
+# LineBufferedFilter helpers
+# ---------------------------------------------------------------------------
+
+class _EchoLineFilter(LineBufferedFilter):
+    """Passes all lines through unchanged — exercises the base class."""
+
+    def _process_line(self, line: str) -> str | None:
+        return line
+
+
+class _DropLineFilter(LineBufferedFilter):
+    """Drops lines containing a keyword, emits the rest."""
+
+    def __init__(self, keyword: str) -> None:
+        super().__init__()
+        self._keyword = keyword
+
+    def _process_line(self, line: str) -> str | None:
+        if self._keyword in line:
+            return None
+        return line
+
+
+# ---------------------------------------------------------------------------
+# TestLineBufferedFilter
+# ---------------------------------------------------------------------------
+
+class TestLineBufferedFilter:
+    """Tests for the line-assembly base class."""
+
+    def test_full_lines_emitted_immediately(self):
+        f = _EchoLineFilter()
+        assert f.feed("hello\nworld\n") == "hello\nworld\n"
+
+    def test_partial_line_buffered(self):
+        f = _EchoLineFilter()
+        assert f.feed("hel") == ""
+        assert f.feed("lo\n") == "hello\n"
+
+    def test_accumulation_across_chunks(self):
+        f = _EchoLineFilter()
+        assert f.feed("hel") == ""
+        assert f.feed("lo\nwo") == "hello\n"
+        assert f.feed("rld\n") == "world\n"
+
+    def test_trailing_partial_flushed(self):
+        f = _EchoLineFilter()
+        assert f.feed("no newline") == ""
+        assert f.flush() == "no newline"
+
+    def test_flush_empty_buffer(self):
+        f = _EchoLineFilter()
+        assert f.feed("line\n") == "line\n"
+        assert f.flush() == ""
+
+    def test_process_line_none_holds(self):
+        f = _DropLineFilter("secret")
+        assert f.feed("keep\nsecret line\nalso keep\n") == "keep\nalso keep\n"
+
+    def test_finalize_called_at_flush(self):
+        """_finalize output appears in flush."""
+
+        class _FinalizeFilter(LineBufferedFilter):
+            def _process_line(self, line: str) -> str | None:
+                return line
+
+            def _finalize(self) -> str:
+                return "[END]"
+
+        f = _FinalizeFilter()
+        f.feed("text\n")
+        assert f.flush() == "[END]"
+
+    def test_trailing_partial_plus_finalize(self):
+        class _FinalizeFilter(LineBufferedFilter):
+            def _process_line(self, line: str) -> str | None:
+                return line
+
+            def _finalize(self) -> str:
+                return "!"
+
+        f = _FinalizeFilter()
+        assert f.feed("tail") == ""
+        assert f.flush() == "tail!"
