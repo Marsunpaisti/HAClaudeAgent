@@ -44,7 +44,7 @@ class HAClaudeAgentUsageCounterSensor(RestoreSensor, SensorEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = SensorStateClass.TOTAL
 
     def __init__(
         self,
