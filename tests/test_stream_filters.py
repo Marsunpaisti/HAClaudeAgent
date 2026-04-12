@@ -13,6 +13,7 @@ from custom_components.ha_claude_agent.stream_filters import (
 # Test helpers
 # ---------------------------------------------------------------------------
 
+
 class _PassThroughFilter(StreamFilter):
     """Returns input unchanged."""
 
@@ -52,6 +53,7 @@ class _HoldFilter(StreamFilter):
 # ---------------------------------------------------------------------------
 # StreamingFilterProcessor
 # ---------------------------------------------------------------------------
+
 
 class TestStreamingFilterProcessor:
     """Tests for the filter pipeline orchestrator."""
@@ -109,6 +111,7 @@ class TestStreamingFilterProcessor:
 # LineBufferedFilter helpers
 # ---------------------------------------------------------------------------
 
+
 class _EchoLineFilter(LineBufferedFilter):
     """Passes all lines through unchanged — exercises the base class."""
 
@@ -132,6 +135,7 @@ class _DropLineFilter(LineBufferedFilter):
 # ---------------------------------------------------------------------------
 # TestLineBufferedFilter
 # ---------------------------------------------------------------------------
+
 
 class TestLineBufferedFilter:
     """Tests for the line-assembly base class."""
@@ -195,6 +199,7 @@ class TestLineBufferedFilter:
 # ---------------------------------------------------------------------------
 # TestSourcesFilter
 # ---------------------------------------------------------------------------
+
 
 class TestSourcesFilter:
     """Tests for the markdown sources-section stripper."""
@@ -291,13 +296,7 @@ class TestSourcesFilter:
 
     def test_sources_mid_text(self):
         f = SourcesFilter()
-        text = (
-            "Intro\n"
-            "# Sources\n"
-            "[A](https://a.com)\n"
-            "[B](https://b.com)\n"
-            "Conclusion\n"
-        )
+        text = "Intro\n# Sources\n[A](https://a.com)\n[B](https://b.com)\nConclusion\n"
         out = f.feed(text) + f.flush()
         assert out == "Intro\nConclusion\n"
 
@@ -305,44 +304,38 @@ class TestSourcesFilter:
 
     def test_bare_urls(self):
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\nhttps://a.com\nhttps://b.com\n"
-        ) + f.flush()
+        out = f.feed("Text\n# Sources\nhttps://a.com\nhttps://b.com\n") + f.flush()
         assert out == "Text\n"
 
     def test_list_marker_dash(self):
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\n- [A](https://a.com)\n- [B](https://b.com)\n"
-        ) + f.flush()
+        out = (
+            f.feed("Text\n# Sources\n- [A](https://a.com)\n- [B](https://b.com)\n")
+            + f.flush()
+        )
         assert out == "Text\n"
 
     def test_list_marker_asterisk(self):
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\n* [A](https://a.com)\n"
-        ) + f.flush()
+        out = f.feed("Text\n# Sources\n* [A](https://a.com)\n") + f.flush()
         assert out == "Text\n"
 
     def test_list_marker_numbered(self):
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\n1. [A](https://a.com)\n2. [B](https://b.com)\n"
-        ) + f.flush()
+        out = (
+            f.feed("Text\n# Sources\n1. [A](https://a.com)\n2. [B](https://b.com)\n")
+            + f.flush()
+        )
         assert out == "Text\n"
 
     def test_list_marker_bare_url(self):
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\n- https://a.com\n"
-        ) + f.flush()
+        out = f.feed("Text\n# Sources\n- https://a.com\n") + f.flush()
         assert out == "Text\n"
 
     def test_empty_lines_in_sources(self):
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\n\n[A](https://a.com)\n\n"
-        ) + f.flush()
+        out = f.feed("Text\n# Sources\n\n[A](https://a.com)\n\n") + f.flush()
         assert out == "Text\n"
 
     # --- Sources to end of stream ---
@@ -395,9 +388,7 @@ class TestSourcesFilter:
         """# Sources immediately followed by # References — both held as
         source content, not two independent false alarms."""
         f = SourcesFilter()
-        out = f.feed(
-            "Text\n# Sources\n# References\n[A](https://a.com)\n"
-        ) + f.flush()
+        out = f.feed("Text\n# Sources\n# References\n[A](https://a.com)\n") + f.flush()
         assert out == "Text\n"
 
     # --- Integration with StreamingFilterProcessor ---
