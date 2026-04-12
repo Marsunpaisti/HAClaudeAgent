@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -232,6 +233,8 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         http_session = async_get_clientsession(self.hass)
         result_state = _StreamResult()
 
+        t_request_start = time.monotonic()
+        t_first_token: float | None = None
         stream_started = False
         try:
             async with http_session.post(
@@ -246,8 +249,8 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     user_input.agent_id,
                     _deltas_from_sdk_stream(resp, result_state),
                 ):
-                    # ChatLog accumulates deltas internally — just drain.
-                    pass
+                    if t_first_token is None:
+                        t_first_token = time.monotonic()
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error(
                 "Add-on request failed (stream_started=%s): %s", stream_started, err
@@ -288,12 +291,21 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 _ERROR_MESSAGES["ClaudeSDKError"], chat_log, user_input.language
             )
 
+        t_total = time.monotonic() - t_request_start
+        ttft_str = (
+            f"{t_first_token - t_request_start:.2f}s"
+            if t_first_token is not None
+            else "n/a"
+        )
         _LOGGER.info(
             "Stream complete: session=%s, cost=$%s, turns=%s, "
+            "ttft=%s, total=%.2fs, "
             "result_error=%s, assistant_error=%s",
             result_state.session_id,
             result_state.cost_usd,
             result_state.num_turns,
+            ttft_str,
+            t_total,
             result_state.result_error_subtype,
             result_state.assistant_error,
         )
