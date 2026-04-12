@@ -1,6 +1,9 @@
 [project]
 name = "ha-claude-agent-addon"
-version = "0.4.8"
+# NOT the release version. The Supervisor reads ha_claude_agent_addon/config.yaml
+# (authoritative for the add-on). This file only configures the add-on's Python
+# environment, so a sentinel value prevents drift on every release cycle.
+version = "0.0.0+dev"
 requires-python = ">=3.13"
 # Add-on runtime dependencies.
 # Generate pinned requirements.txt: uv export --no-hashes -o requirements.txt
