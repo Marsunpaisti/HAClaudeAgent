@@ -396,7 +396,13 @@ async def _deltas_from_sdk_stream(
                 state.assistant_error = error
 
             case RateLimitEvent(rate_limit_info=info):
-                _LOGGER.warning(
+                level = (
+                    logging.WARNING
+                    if info.status != "allowed"
+                    else logging.DEBUG
+                )
+                _LOGGER.log(
+                    level,
                     "Claude rate limit: status=%s type=%s utilization=%s",
                     info.status,
                     info.rate_limit_type,
