@@ -57,6 +57,7 @@ from .const import (
 from .helpers import build_system_prompt
 from .models import QueryRequest
 from .stream import sdk_stream
+from .stream_filters import SourcesFilter, StreamingFilterProcessor
 from .usage import UsagePayload
 
 _LOGGER = logging.getLogger(__name__)
@@ -356,12 +357,17 @@ async def _deltas_from_sdk_stream(
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     """Adapter: consume sdk_stream() and yield ChatLog deltas.
 
-    Side-effects: records session/result metadata onto `state`. The
+    Side-effects: records session/result metadata onto ``state``.  The
     ChatLog machinery only cares about assistant role markers and
     content/thinking deltas; other SDK message types (ResultMessage,
     SystemMessage, RateLimitEvent, etc.) are consumed silently for
     their metadata.
+
+    Text content deltas are passed through a
+    :class:`StreamingFilterProcessor` to strip sources sections (and
+    any future filter types) before reaching the chat log.
     """
+    processor = StreamingFilterProcessor([SourcesFilter()])
     role_yielded = False
 
     async for message in sdk_stream(resp):
@@ -370,6 +376,12 @@ async def _deltas_from_sdk_stream(
                 delta = _delta_from_anthropic_event(ev)
                 if delta is None:
                     continue
+                # Only filter text deltas, not thinking deltas
+                if "content" in delta:
+                    filtered = processor.feed(delta["content"])
+                    if not filtered:
+                        continue
+                    delta = {"content": filtered}
                 if not role_yielded:
                     yield {"role": "assistant"}
                     role_yielded = True
@@ -413,6 +425,14 @@ async def _deltas_from_sdk_stream(
                 # AssistantMessage (non-error), UserMessage (tool results),
                 # and any future Message subtypes are ignored for now.
                 pass
+
+    # Flush any remaining buffered content at end of stream
+    final = processor.flush()
+    if final:
+        if not role_yielded:
+            yield {"role": "assistant"}
+            role_yielded = True
+        yield {"content": final}
 
 
 def _delta_from_anthropic_event(
