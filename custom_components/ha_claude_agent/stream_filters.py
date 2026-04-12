@@ -12,6 +12,8 @@ of one becomes the input of the next.
 
 from __future__ import annotations
 
+import enum
+import re
 from abc import ABC, abstractmethod
 
 
@@ -106,4 +108,111 @@ class LineBufferedFilter(StreamFilter):
         """Called at end of stream after the trailing partial line (if any)
         has been processed.  Override to release held state.
         """
+        return ""
+
+
+class SourcesFilter(LineBufferedFilter):
+    """Detects and removes markdown 'Sources' sections from streaming text.
+
+    Uses a 3-state machine:
+
+    - **NORMAL** — default; emits lines, watches for source headers.
+    - **POSSIBLE_HEADER** — saw a header; holds it while waiting for
+      confirmation (a source-line) or rejection (any other line).
+    - **IN_SOURCES** — confirmed sources section; holds (and ultimately
+      discards) source lines until a non-source line appears.
+    """
+
+    _SOURCE_KEYWORDS = ("sources", "references", "citations", "lähteet", "viitteet")
+
+    _HEADER_PATTERN = re.compile(
+        r"^\s*(?:#{1,3}\s+)?(?:\*\*)?(?:"
+        + "|".join(re.escape(kw) for kw in _SOURCE_KEYWORDS)
+        + r")\s*:?\s*(?:\*\*)?\s*$",
+        re.IGNORECASE,
+    )
+
+    _SOURCE_LINE_PATTERN = re.compile(
+        r"^\s*$"
+        r"|^\s*(?:(?:[-*]|\d+\.)\s+)?(?:\[.*?\]\(https?://[^)]*\)|https?://\S+)\s*$",
+        re.IGNORECASE,
+    )
+
+    class _State(enum.Enum):
+        NORMAL = "normal"
+        POSSIBLE_HEADER = "possible_header"
+        IN_SOURCES = "in_sources"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._state = self._State.NORMAL
+        self._held: list[str] = []
+        self._last_held_is_partial = False
+
+    def flush(self) -> str:
+        # Signal that any line processed during the base flush() is partial
+        # (no trailing newline), so _finalize can reconstruct it correctly.
+        self._last_held_is_partial = bool(self._line_buffer)
+        return super().flush()
+
+    def _is_header(self, line: str) -> bool:
+        return bool(self._HEADER_PATTERN.match(line))
+
+    def _is_source_line(self, line: str) -> bool:
+        return self._is_header(line) or bool(self._SOURCE_LINE_PATTERN.match(line))
+
+    def _process_line(self, line: str) -> str | None:
+        match self._state:
+            case self._State.NORMAL:
+                if self._is_header(line):
+                    self._held.append(line)
+                    self._state = self._State.POSSIBLE_HEADER
+                    return None
+                return line
+
+            case self._State.POSSIBLE_HEADER:
+                if self._is_source_line(line):
+                    self._held.append(line)
+                    self._state = self._State.IN_SOURCES
+                    return None
+                # False alarm — release held header + emit this line
+                held = self._held
+                self._held = []
+                self._state = self._State.NORMAL
+                return "\n".join(held) + "\n" + line
+
+            case self._State.IN_SOURCES:
+                if self._is_source_line(line):
+                    self._held.append(line)
+                    return None
+                # End of sources section — discard held, emit this line
+                self._held.clear()
+                self._state = self._State.NORMAL
+                return line
+
+        return line  # pragma: no cover
+
+    def _finalize(self) -> str:
+        match self._state:
+            case self._State.POSSIBLE_HEADER:
+                # End of stream with unconfirmed header = false alarm.
+                # All held lines were full lines except possibly the last,
+                # which may be a partial (no trailing newline) if it arrived
+                # from flush() rather than feed().
+                parts: list[str] = []
+                for i, line in enumerate(self._held):
+                    is_last = i == len(self._held) - 1
+                    if is_last and self._last_held_is_partial:
+                        parts.append(line)
+                    else:
+                        parts.append(line + "\n")
+                self._held = []
+                self._last_held_is_partial = False
+                self._state = self._State.NORMAL
+                return "".join(parts)
+            case self._State.IN_SOURCES:
+                # Confirmed sources section — discard
+                self._held.clear()
+                self._last_held_is_partial = False
+                self._state = self._State.NORMAL
         return ""

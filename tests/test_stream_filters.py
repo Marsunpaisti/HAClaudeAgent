@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from custom_components.ha_claude_agent.stream_filters import (
     LineBufferedFilter,
+    SourcesFilter,
     StreamFilter,
     StreamingFilterProcessor,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -190,3 +190,220 @@ class TestLineBufferedFilter:
         f = _FinalizeFilter()
         assert f.feed("tail") == ""
         assert f.flush() == "tail!"
+
+
+# ---------------------------------------------------------------------------
+# TestSourcesFilter
+# ---------------------------------------------------------------------------
+
+class TestSourcesFilter:
+    """Tests for the markdown sources-section stripper."""
+
+    # --- Pass-through (no sources) ---
+
+    def test_normal_text_unchanged(self):
+        f = SourcesFilter()
+        assert f.feed("Hello world\n") == "Hello world\n"
+        assert f.flush() == ""
+
+    def test_multiline_normal_text(self):
+        f = SourcesFilter()
+        text = "Line one\nLine two\nLine three\n"
+        assert f.feed(text) == text
+        assert f.flush() == ""
+
+    # --- Basic source removal ---
+
+    def test_sources_at_end(self):
+        f = SourcesFilter()
+        out = f.feed("Answer text\n# Sources\n[Google](https://google.com)\n")
+        out += f.flush()
+        assert out == "Answer text\n"
+
+    def test_references_header(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n## References\n[Link](https://example.com)\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    def test_citations_header(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n### Citations\nhttps://example.com\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    def test_bold_header(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n**Sources**\n[Link](https://example.com)\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    def test_bold_header_with_colon(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n**References:**\nhttps://example.com\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    def test_header_with_colon(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n## Sources:\n[L](https://x.com)\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    # --- Multilingual ---
+
+    def test_finnish_lahteet(self):
+        f = SourcesFilter()
+        out = f.feed("Vastaus\n# Lähteet\n[S](https://s.fi)\n")
+        out += f.flush()
+        assert out == "Vastaus\n"
+
+    def test_finnish_viitteet(self):
+        f = SourcesFilter()
+        out = f.feed("Teksti\n## Viitteet\nhttps://example.fi\n")
+        out += f.flush()
+        assert out == "Teksti\n"
+
+    # --- False alarm ---
+
+    def test_header_followed_by_normal_text(self):
+        """Header then non-source line = false alarm; both emitted."""
+        f = SourcesFilter()
+        out = f.feed("# Sources\nThis is not a link\n")
+        out += f.flush()
+        assert out == "# Sources\nThis is not a link\n"
+
+    def test_header_at_end_of_stream_is_false_alarm(self):
+        """Header with nothing after it at flush = false alarm; emitted."""
+        f = SourcesFilter()
+        out = f.feed("# Sources\n")
+        out += f.flush()
+        assert out == "# Sources\n"
+
+    def test_header_at_end_no_newline(self):
+        """Trailing partial header at flush = false alarm; emitted."""
+        f = SourcesFilter()
+        out = f.feed("# Sources")
+        out += f.flush()
+        assert out == "# Sources"
+
+    # --- Sources followed by more content ---
+
+    def test_sources_mid_text(self):
+        f = SourcesFilter()
+        text = (
+            "Intro\n"
+            "# Sources\n"
+            "[A](https://a.com)\n"
+            "[B](https://b.com)\n"
+            "Conclusion\n"
+        )
+        out = f.feed(text) + f.flush()
+        assert out == "Intro\nConclusion\n"
+
+    # --- Source-line variants ---
+
+    def test_bare_urls(self):
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\nhttps://a.com\nhttps://b.com\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    def test_list_marker_dash(self):
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\n- [A](https://a.com)\n- [B](https://b.com)\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    def test_list_marker_asterisk(self):
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\n* [A](https://a.com)\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    def test_list_marker_numbered(self):
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\n1. [A](https://a.com)\n2. [B](https://b.com)\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    def test_list_marker_bare_url(self):
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\n- https://a.com\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    def test_empty_lines_in_sources(self):
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\n\n[A](https://a.com)\n\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    # --- Sources to end of stream ---
+
+    def test_sources_to_end_discarded(self):
+        f = SourcesFilter()
+        out = f.feed("Intro\n# Sources\n[A](https://a.com)\n")
+        out += f.flush()
+        assert out == "Intro\n"
+
+    # --- Chunk boundary tests ---
+
+    def test_header_split_across_chunks(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n# Sou")
+        out += f.feed("rces\n[A](https://a.com)\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    def test_source_line_split_across_chunks(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n# Sources\n[A](htt")
+        out += f.feed("ps://a.com)\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    def test_header_and_link_in_separate_chunks(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n")
+        out += f.feed("# Sources\n")
+        out += f.feed("[A](https://a.com)\n")
+        out += f.flush()
+        assert out == "Text\n"
+
+    # --- Case insensitivity ---
+
+    def test_case_insensitive_header(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n# SOURCES\n[A](https://a.com)\n") + f.flush()
+        assert out == "Text\n"
+
+    def test_case_insensitive_mixed(self):
+        f = SourcesFilter()
+        out = f.feed("Text\n## ReFeReNcEs\nhttps://x.com\n") + f.flush()
+        assert out == "Text\n"
+
+    # --- Consecutive source headers ---
+
+    def test_header_then_header(self):
+        """# Sources immediately followed by # References — both held as
+        source content, not two independent false alarms."""
+        f = SourcesFilter()
+        out = f.feed(
+            "Text\n# Sources\n# References\n[A](https://a.com)\n"
+        ) + f.flush()
+        assert out == "Text\n"
+
+    # --- Integration with StreamingFilterProcessor ---
+
+    def test_sources_through_processor(self):
+        proc = StreamingFilterProcessor([SourcesFilter()])
+        out = proc.feed("Text\n# Sources\n[A](https://a.com)\n")
+        out += proc.flush()
+        assert out == "Text\n"
