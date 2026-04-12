@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -57,6 +58,7 @@ from .const import (
 from .helpers import build_system_prompt
 from .models import QueryRequest
 from .stream import sdk_stream
+from .stream_filters import SourcesFilter, StreamingFilterProcessor
 from .usage import UsagePayload
 
 _LOGGER = logging.getLogger(__name__)
@@ -231,6 +233,8 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         http_session = async_get_clientsession(self.hass)
         result_state = _StreamResult()
 
+        t_request_start = time.monotonic()
+        t_first_token: float | None = None
         stream_started = False
         try:
             async with http_session.post(
@@ -245,8 +249,8 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                     user_input.agent_id,
                     _deltas_from_sdk_stream(resp, result_state),
                 ):
-                    # ChatLog accumulates deltas internally — just drain.
-                    pass
+                    if t_first_token is None:
+                        t_first_token = time.monotonic()
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error(
                 "Add-on request failed (stream_started=%s): %s", stream_started, err
@@ -287,12 +291,21 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
                 _ERROR_MESSAGES["ClaudeSDKError"], chat_log, user_input.language
             )
 
+        t_total = time.monotonic() - t_request_start
+        ttft_str = (
+            f"{t_first_token - t_request_start:.2f}s"
+            if t_first_token is not None
+            else "n/a"
+        )
         _LOGGER.info(
             "Stream complete: session=%s, cost=$%s, turns=%s, "
+            "ttft=%s, total=%.2fs, "
             "result_error=%s, assistant_error=%s",
             result_state.session_id,
             result_state.cost_usd,
             result_state.num_turns,
+            ttft_str,
+            t_total,
             result_state.result_error_subtype,
             result_state.assistant_error,
         )
@@ -356,12 +369,17 @@ async def _deltas_from_sdk_stream(
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     """Adapter: consume sdk_stream() and yield ChatLog deltas.
 
-    Side-effects: records session/result metadata onto `state`. The
+    Side-effects: records session/result metadata onto ``state``.  The
     ChatLog machinery only cares about assistant role markers and
     content/thinking deltas; other SDK message types (ResultMessage,
     SystemMessage, RateLimitEvent, etc.) are consumed silently for
     their metadata.
+
+    Text content deltas are passed through a
+    :class:`StreamingFilterProcessor` to strip sources sections (and
+    any future filter types) before reaching the chat log.
     """
+    processor = StreamingFilterProcessor([SourcesFilter()])
     role_yielded = False
 
     async for message in sdk_stream(resp):
@@ -370,6 +388,12 @@ async def _deltas_from_sdk_stream(
                 delta = _delta_from_anthropic_event(ev)
                 if delta is None:
                     continue
+                # Only filter text deltas, not thinking deltas
+                if "content" in delta:
+                    filtered = processor.feed(delta["content"])
+                    if not filtered:
+                        continue
+                    delta = {"content": filtered}
                 if not role_yielded:
                     yield {"role": "assistant"}
                     role_yielded = True
@@ -396,7 +420,9 @@ async def _deltas_from_sdk_stream(
                 state.assistant_error = error
 
             case RateLimitEvent(rate_limit_info=info):
-                _LOGGER.warning(
+                level = logging.WARNING if info.status != "allowed" else logging.DEBUG
+                _LOGGER.log(
+                    level,
                     "Claude rate limit: status=%s type=%s utilization=%s",
                     info.status,
                     info.rate_limit_type,
@@ -407,6 +433,14 @@ async def _deltas_from_sdk_stream(
                 # AssistantMessage (non-error), UserMessage (tool results),
                 # and any future Message subtypes are ignored for now.
                 pass
+
+    # Flush any remaining buffered content at end of stream
+    final = processor.flush()
+    if final:
+        if not role_yielded:
+            yield {"role": "assistant"}
+            role_yielded = True
+        yield {"content": final}
 
 
 def _delta_from_anthropic_event(
