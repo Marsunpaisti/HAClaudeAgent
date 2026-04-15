@@ -63,13 +63,17 @@ Two concrete implementations:
      three `@function_tool` functions.
   3. Constructs `Agent(name="ha_assistant", instructions=req.system_prompt,
      model=req.model, tools=[...])`.
-  4. Opens a `SQLiteSession(session_id=req.session_id or conversation_id,
-     db_path="/data/sessions.db")` for history.
+  4. Opens a `SQLiteSession(session_id=req.session_id or uuid.uuid4().hex,
+     db_path="/data/sessions.db")` for history. On first turn
+     (`req.session_id is None`) the generated UUID is echoed back to the
+     integration via `OpenAIInitEvent` (see wire protocol below) so the
+     integration's existing session LRU cache can store it.
   5. Runs `Runner.run_streamed(agent, req.prompt, session=session,
      max_turns=req.max_turns)`, iterating `result.stream_events()`.
-  6. Forwards each event over SSE via the new `to_jsonable_pydantic()`
-     serializer; synthesizes a terminal `OpenAIResultEvent` after the
-     stream exits with `{session_id, input_tokens, output_tokens, error}`.
+  6. Emits a leading `OpenAIInitEvent(session_id=...)`, forwards each
+     stream event via the new `to_jsonable_pydantic()` serializer, then
+     emits a terminal `OpenAIResultEvent(input_tokens, output_tokens,
+     error)` after the stream exits.
   7. Maps `openai.AuthenticationError` / `RateLimitError` / `APIError` /
      `NotFoundError` / `APIConnectionError` through `exception_to_dict()`.
 
@@ -91,16 +95,21 @@ that uses `obj.model_dump(mode="json")` for Pydantic `BaseModel` instances
 and injects the same `_type` tag. Dataclass and Pydantic paths coexist —
 `to_jsonable` dispatches by instance type.
 
-**New Pydantic model** `OpenAIResultEvent` in the add-on's local
-`openai_events.py`:
+**Two new Pydantic models** in the add-on's local `openai_events.py`:
 
 ```python
-class OpenAIResultEvent(BaseModel):
+class OpenAIInitEvent(BaseModel):
     session_id: str
+
+class OpenAIResultEvent(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     error: str | None = None
 ```
+
+`OpenAIInitEvent` is emitted once at stream start. `OpenAIResultEvent` is
+emitted once at stream end. Neither reuses Claude SDK dataclasses — the
+integration's router matches on the openai-agents-specific types directly.
 
 **Integration side (`stream.py`):** `from_jsonable()` extends its class
 lookup: try `claude_agent_sdk`, then `agents` (openai-agents public
@@ -109,16 +118,12 @@ package), then a new `custom_components/ha_claude_agent/openai_events.py`
 raw dict, preserving today's graceful-degradation behavior.
 
 **Session-id flow on OpenAI:** `OpenAIBackend` uses the integration's
-supplied `session_id` as the SQLiteSession key; if absent (first turn), it
-generates a UUID and echoes it back in the first `OpenAIResultEvent` (well,
-in a synthesized init event — see below). The integration's existing
-session LRU cache consumes it unchanged. This keeps `QueryRequest`
-identical and avoids a schema change.
-
-Concretely, `OpenAIBackend` emits one `SystemMessage(subtype="init",
-data={"session_id": sid})`-equivalent at stream start — but it's a Pydantic
-model named `OpenAIInitEvent(session_id: str)` rather than reusing the
-Claude SDK dataclass. The integration's router matches on either type.
+supplied `req.session_id` as the SQLiteSession key; if absent (first turn),
+it generates a UUID. It emits an `OpenAIInitEvent(session_id: str)`
+Pydantic model at stream start, carrying whichever session id is in play.
+The integration's existing session LRU cache picks it up the same way it
+consumes `SystemMessage(subtype="init")` today. `QueryRequest` is
+unchanged.
 
 ### Integration: stream consumption
 
