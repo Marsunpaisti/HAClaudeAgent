@@ -269,6 +269,7 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                     SelectSelectorConfig(
                         options=MODELS,
                         mode=SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
                     )
                 ),
                 vol.Optional(
