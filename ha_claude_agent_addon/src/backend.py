@@ -114,3 +114,107 @@ class ClaudeBackend:
         except BaseException as err:  # noqa: BLE001
             _LOGGER.exception("Claude query failed")
             yield _sse_event("exception", exception_to_dict(err))
+
+
+import uuid  # noqa: E402
+
+from agents import Agent, Runner, set_default_openai_client  # noqa: E402
+from agents.memory import SQLiteSession  # noqa: E402
+from openai import AsyncOpenAI  # noqa: E402
+
+from openai_events import OpenAIInitEvent, OpenAIResultEvent  # noqa: E402
+from tools_openai import create_ha_tools_openai  # noqa: E402
+
+
+class OpenAIBackend:
+    """Backend that wraps openai-agents for any OpenAI-compatible endpoint."""
+
+    name = "openai"
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        sessions_db_path: str = "/data/sessions.db",
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = base_url
+        self._sessions_db_path = sessions_db_path
+
+    async def stream_query(
+        self,
+        req: QueryRequest,
+        ha_client: HAClient,
+    ) -> AsyncGenerator[str, None]:
+        session_id = req.session_id or uuid.uuid4().hex
+        _LOGGER.info(
+            "OpenAI query: model=%s, effort=%s, max_turns=%d, session=%s, resumed=%s",
+            req.model,
+            req.effort,
+            req.max_turns,
+            session_id,
+            req.session_id is not None,
+        )
+
+        # Leading init event — integration picks this up into its session cache.
+        yield _sse_event(
+            "OpenAIInitEvent",
+            to_jsonable(OpenAIInitEvent(session_id=session_id)),
+        )
+
+        error_text: str | None = None
+        input_tokens = 0
+        output_tokens = 0
+
+        try:
+            client = AsyncOpenAI(base_url=self._base_url, api_key=self._api_key)
+            set_default_openai_client(client)
+
+            tools = create_ha_tools_openai(ha_client, req.exposed_entities)
+            agent = Agent(
+                name="ha_assistant",
+                instructions=req.system_prompt,
+                model=req.model,
+                tools=tools,
+            )
+            session = SQLiteSession(
+                session_id=session_id,
+                db_path=self._sessions_db_path,
+            )
+
+            result = Runner.run_streamed(
+                agent,
+                req.prompt,
+                session=session,
+                max_turns=req.max_turns,
+            )
+            async for event in result.stream_events():
+                yield _sse_event(type(event).__name__, to_jsonable(event))
+
+            usage = getattr(result, "usage", None)
+            if usage is not None:
+                input_tokens = getattr(usage, "input_tokens", 0) or 0
+                output_tokens = getattr(usage, "output_tokens", 0) or 0
+
+        except GeneratorExit:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except BaseException as err:  # noqa: BLE001
+            _LOGGER.exception("OpenAI query failed")
+            error_text = f"{type(err).__name__}: {err}"
+            yield _sse_event("exception", exception_to_dict(err))
+            # Fall through to emit the terminal result event anyway — the
+            # integration uses ResultEvent presence as the "stream ended
+            # cleanly enough to record usage" signal.
+
+        yield _sse_event(
+            "OpenAIResultEvent",
+            to_jsonable(
+                OpenAIResultEvent(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    error=error_text,
+                )
+            ),
+        )
