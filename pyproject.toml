@@ -21,6 +21,7 @@ dependencies = [
     "claude-agent-sdk>=0.1.56",
     "openai-agents>=0.7.0",
     "fastapi>=0.135.0",
+    "hassil>=2.2.3",
 ]
 
 [tool.mypy]

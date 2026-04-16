@@ -1605,6 +1605,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "hassil" },
     { name = "homeassistant", version = "2025.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
     { name = "homeassistant", version = "2026.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and python_full_version < '3.14.2'" },
     { name = "homeassistant", version = "2026.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14.2'" },
@@ -1626,6 +1627,7 @@ dev = [
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.1.56" },
     { name = "fastapi", specifier = ">=0.135.0" },
+    { name = "hassil", specifier = ">=2.2.3" },
     { name = "homeassistant", specifier = ">=2025.4.0" },
     { name = "mypy" },
     { name = "openai-agents", specifier = ">=0.7.0" },
@@ -1791,7 +1793,8 @@ version = "2.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml", version = "6.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
-    { name = "unicode-rbnf", marker = "python_full_version < '3.13.2'" },
+    { name = "pyyaml", version = "6.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2'" },
+    { name = "unicode-rbnf" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c9/f4/bf2f642321114c4ca4586efb194274905388a09b1c95e52529eba2fd4d51/hassil-2.2.3.tar.gz", hash = "sha256:8516ebde2caf72362ea566cd677cb382138be3f5d36889fee21bb313bfd7d0d8", size = 46867, upload-time = "2025-02-04T17:36:22.142Z" }
 wheels = [
