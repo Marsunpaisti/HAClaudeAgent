@@ -14,6 +14,14 @@ from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any, Protocol
 
 import claude_agent_sdk
+from pydantic import BaseModel as _PydanticBaseModel
+
+from . import openai_events as _openai_events_module
+
+try:
+    import agents as _agents_module
+except ImportError:
+    _agents_module = None
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +98,36 @@ async def parse_sse_stream(
         yield event_type, data
 
 
+def _resolve_wire_class(cls_name: str) -> type | None:
+    """Find the class `cls_name` across the known wire-format namespaces.
+
+    Lookup order:
+      1. claude_agent_sdk (Claude backend dataclasses)
+      2. agents (openai-agents public API: stream events, run items, ...)
+      3. openai_events (this project's own Pydantic init/result events)
+
+    Returns None if the name is not found in any namespace, or if found but
+    not a reconstructable dataclass/pydantic model — caller falls back to
+    returning a raw dict.
+    """
+    for module in (
+        claude_agent_sdk,
+        _agents_module,
+        _openai_events_module,
+    ):
+        if module is None:
+            continue
+        cls = getattr(module, cls_name, None)
+        if cls is None:
+            continue
+        if isinstance(cls, type) and (
+            dataclasses.is_dataclass(cls)
+            or issubclass(cls, _PydanticBaseModel)
+        ):
+            return cls
+    return None
+
+
 def from_jsonable(obj: Any) -> Any:
     """Reconstruct SDK dataclass instances from a JSON-friendly payload.
 
@@ -113,21 +151,32 @@ def from_jsonable(obj: Any) -> Any:
                 k: from_jsonable(v) for k, v in obj.items() if k != "_type"
             }
             # Security: class lookup is intentionally narrowed to dataclasses
-            # exported from the `claude_agent_sdk` top-level namespace. The
-            # `is_dataclass` guard rejects non-dataclass exports (e.g. `sys`,
-            # `Any`, `TypeVar`) that currently leak into the namespace, and
-            # the module-scoped lookup keeps a compromised or buggy add-on
-            # response from tricking us into instantiating arbitrary classes.
-            cls = getattr(claude_agent_sdk, cls_name, None)
-            if cls is None or not (
-                isinstance(cls, type) and dataclasses.is_dataclass(cls)
-            ):
+            # exported from known safe namespaces (claude_agent_sdk, agents,
+            # openai_events). The is_dataclass / issubclass(_PydanticBaseModel)
+            # guard rejects non-model exports (e.g. `sys`, `Any`, `TypeVar`)
+            # that may leak into those namespaces, and the module-scoped lookup
+            # keeps a compromised or buggy add-on response from tricking us into
+            # instantiating arbitrary classes.
+            cls = _resolve_wire_class(cls_name)
+            if cls is None:
                 _LOGGER.debug(
-                    "Unknown SDK class %r in stream payload; returning raw dict",
+                    "Unknown class %r in stream payload; returning raw dict",
                     cls_name,
                 )
                 return fields_payload
 
+            if issubclass(cls, _PydanticBaseModel):
+                try:
+                    return cls.model_validate(fields_payload)
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Failed to reconstruct pydantic %s: %s; raw dict",
+                        cls_name,
+                        err,
+                    )
+                    return fields_payload
+
+            # Dataclass path (existing behavior).
             known_field_names = {f.name for f in dataclasses.fields(cls)}
             accepted = {
                 k: v for k, v in fields_payload.items() if k in known_field_names
