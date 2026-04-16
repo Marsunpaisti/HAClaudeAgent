@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
+import openai
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKError,
@@ -112,7 +113,43 @@ _ERROR_MESSAGES: dict[str, str] = {
     "stream_interrupted": (
         "The connection to the add-on was interrupted mid-stream. Please try again."
     ),
+    # OpenAI exceptions
+    "openai_auth_failed": (
+        "OpenAI authentication failed. Check the API key in the add-on settings."
+    ),
+    "openai_rate_limit": (
+        "OpenAI rate limit hit. Please wait a moment and try again."
+    ),
+    "openai_server_error": (
+        "The model provider returned a server error. Please try again."
+    ),
+    "openai_invalid_model": (
+        "The configured model was not accepted by the provider. "
+        "Check the model name in the conversation agent settings."
+    ),
+    "openai_connection_error": (
+        "Could not reach the OpenAI-compatible endpoint. "
+        "Check the base URL in the add-on settings."
+    ),
 }
+
+
+def _map_openai_exception_to_key(err: BaseException) -> str | None:
+    """Return the `_ERROR_MESSAGES` key for an openai.* exception, or None."""
+    if isinstance(err, openai.AuthenticationError):
+        return "openai_auth_failed"
+    if isinstance(err, openai.RateLimitError):
+        return "openai_rate_limit"
+    if isinstance(err, openai.NotFoundError):
+        return "openai_invalid_model"
+    if isinstance(err, openai.APIConnectionError):
+        return "openai_connection_error"
+    # Catch-all for remaining openai.APIError subclasses (InternalServerError,
+    # etc.). Keep this check last — more specific subclasses should match
+    # before this catch.
+    if isinstance(err, openai.APIError):
+        return "openai_server_error"
+    return None
 
 
 @dataclass
@@ -299,6 +336,14 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             _LOGGER.error("Unknown SDK error: %s", err)
             return self._error_response(
                 _ERROR_MESSAGES["ClaudeSDKError"], chat_log, user_input.language
+            )
+        except openai.APIError as err:
+            key = _map_openai_exception_to_key(err) or "openai_server_error"
+            _LOGGER.error("OpenAI error (%s): %s", type(err).__name__, err)
+            return self._error_response(
+                _ERROR_MESSAGES[key],
+                chat_log,
+                user_input.language,
             )
 
         t_total = time.monotonic() - t_request_start
