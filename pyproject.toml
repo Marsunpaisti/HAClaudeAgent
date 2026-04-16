@@ -19,6 +19,7 @@ dependencies = [
     "ruff",
     "pre-commit",
     "claude-agent-sdk>=0.1.56",
+    "openai-agents>=0.7.0",
     "fastapi>=0.135.0",
 ]
 
@@ -34,6 +35,10 @@ disable_error_code = "arg-type, override, call-arg, typeddict-item, no-any-retur
 
 [[tool.mypy.overrides]]
 module = "claude_agent_sdk.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "agents.*"
 ignore_missing_imports = true
 
 [tool.ruff]

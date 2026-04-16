@@ -9,6 +9,7 @@ requires-python = ">=3.13"
 # Generate pinned requirements.txt: uv export --no-hashes -o requirements.txt
 dependencies = [
     "claude-agent-sdk>=0.1.56",
+    "openai-agents>=0.7.0",
     "aiohttp>=3.13.0",
     "fastapi>=0.135.0",
     "uvicorn[standard]>=0.44.0",
