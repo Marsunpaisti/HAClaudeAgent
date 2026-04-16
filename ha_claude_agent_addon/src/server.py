@@ -27,7 +27,7 @@ from fastapi.responses import StreamingResponse
 from ha_client import HAClient
 from models import QueryRequest
 from serialization import exception_to_dict, to_jsonable
-from tools import create_ha_tools
+from tools_claude import create_ha_tools_claude
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,7 +126,7 @@ async def _stream_query(
     )
 
     try:
-        mcp_tools = create_ha_tools(ha_client, body.exposed_entities)
+        mcp_tools = create_ha_tools_claude(ha_client, body.exposed_entities)
         mcp_server = create_sdk_mcp_server(
             name=MCP_SERVER_NAME,
             version="1.0.0",
