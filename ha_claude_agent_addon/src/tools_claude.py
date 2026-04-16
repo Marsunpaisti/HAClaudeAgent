@@ -11,7 +11,6 @@ import logging
 from typing import Any
 
 from claude_agent_sdk import tool
-
 from ha_client import HAClient
 from tool_logic import (
     ToolBlocked,

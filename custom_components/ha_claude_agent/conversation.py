@@ -69,8 +69,8 @@ from .usage import UsagePayload
 try:
     from agents import RawResponsesStreamEvent, RunItemStreamEvent
 except ImportError:
-    RawResponsesStreamEvent = None  # type: ignore[assignment]
-    RunItemStreamEvent = None  # type: ignore[assignment]
+    RawResponsesStreamEvent = None  # type: ignore[assignment,misc]
+    RunItemStreamEvent = None  # type: ignore[assignment,misc]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -117,9 +117,7 @@ _ERROR_MESSAGES: dict[str, str] = {
     "openai_auth_failed": (
         "OpenAI authentication failed. Check the API key in the add-on settings."
     ),
-    "openai_rate_limit": (
-        "OpenAI rate limit hit. Please wait a moment and try again."
-    ),
+    "openai_rate_limit": ("OpenAI rate limit hit. Please wait a moment and try again."),
     "openai_server_error": (
         "The model provider returned a server error. Please try again."
     ),
@@ -447,9 +445,7 @@ def _is_openai_event(obj: object) -> bool:
         return True
     if RawResponsesStreamEvent is not None and isinstance(obj, RawResponsesStreamEvent):
         return True
-    if RunItemStreamEvent is not None and isinstance(obj, RunItemStreamEvent):
-        return True
-    return False
+    return RunItemStreamEvent is not None and isinstance(obj, RunItemStreamEvent)
 
 
 async def _deltas_from_claude_with_first(
@@ -506,9 +502,7 @@ async def _deltas_from_claude_with_first(
                 state.assistant_error = error
 
             case RateLimitEvent(rate_limit_info=info):
-                level = (
-                    logging.WARNING if info.status != "allowed" else logging.DEBUG
-                )
+                level = logging.WARNING if info.status != "allowed" else logging.DEBUG
                 _LOGGER.log(
                     level,
                     "Claude rate limit: status=%s type=%s utilization=%s",
@@ -559,9 +553,7 @@ async def _deltas_from_openai(
             case OpenAIInitEvent(session_id=sid):
                 state.session_id = sid
 
-            case OpenAIResultEvent(
-                input_tokens=ti, output_tokens=to, error=err
-            ):
+            case OpenAIResultEvent(input_tokens=ti, output_tokens=to, error=err):
                 state.usage_dict = {
                     "input_tokens": ti,
                     "output_tokens": to,

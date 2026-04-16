@@ -13,10 +13,9 @@ import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
+from backend import Backend, ClaudeBackend, OpenAIBackend
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-
-from backend import Backend, ClaudeBackend, OpenAIBackend
 from ha_client import HAClient
 from models import QueryRequest
 
@@ -69,9 +68,7 @@ def _select_backend(options: dict) -> Backend:
         api_key = options.get("openai_api_key") or ""
         base_url = options.get("openai_base_url") or ""
         if not api_key:
-            raise RuntimeError(
-                "Missing openai_api_key — required when backend=openai."
-            )
+            raise RuntimeError("Missing openai_api_key — required when backend=openai.")
         if not base_url:
             raise RuntimeError(
                 "Missing openai_base_url — required when backend=openai. "

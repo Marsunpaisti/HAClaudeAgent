@@ -41,9 +41,7 @@ async def call_service_logic(
     """Call an HA service and return a human-readable confirmation string."""
     if entity_id not in exposed_set:
         _LOGGER.warning("Blocked service call on unexposed entity: %s", entity_id)
-        raise ToolBlocked(
-            f"Entity {entity_id} is not exposed to conversation agents."
-        )
+        raise ToolBlocked(f"Entity {entity_id} is not exposed to conversation agents.")
 
     try:
         extra_data = json.loads(service_data) if service_data else {}
@@ -55,9 +53,7 @@ async def call_service_logic(
 
     state = await ha_client.get_state(entity_id)
     state_str = state["state"] if state else "unknown"
-    return (
-        f"Called {domain}.{service} on {entity_id}. Current state: {state_str}"
-    )
+    return f"Called {domain}.{service} on {entity_id}. Current state: {state_str}"
 
 
 async def get_entity_state_logic(
@@ -68,9 +64,7 @@ async def get_entity_state_logic(
     """Return the current state of an entity as a JSON string."""
     if entity_id not in exposed_set:
         _LOGGER.warning("Blocked state read on unexposed entity: %s", entity_id)
-        raise ToolBlocked(
-            f"Entity {entity_id} is not exposed to conversation agents."
-        )
+        raise ToolBlocked(f"Entity {entity_id} is not exposed to conversation agents.")
 
     state = await ha_client.get_state(entity_id)
     if state is None:

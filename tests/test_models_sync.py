@@ -31,7 +31,9 @@ def test_openai_events_sync():
     assert integration_file.exists(), f"Missing: {integration_file}"
     # Normalize line endings to handle CRLF vs LF differences (Windows/Linux)
     addon_text = addon_file.read_text(encoding="utf-8").replace("\r\n", "\n")
-    integration_text = integration_file.read_text(encoding="utf-8").replace("\r\n", "\n")
+    integration_text = integration_file.read_text(encoding="utf-8").replace(
+        "\r\n", "\n"
+    )
     assert addon_text == integration_text, (
         "openai_events.py copies have drifted — keep them identical"
     )

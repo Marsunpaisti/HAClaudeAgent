@@ -19,9 +19,9 @@ from pydantic import BaseModel as _PydanticBaseModel
 from . import openai_events as _openai_events_module
 
 try:
-    import agents as _agents_module
+    import agents as _agents_module  # type: ignore[import-not-found]
 except ImportError:
-    _agents_module = None
+    _agents_module = None  # type: ignore[assignment]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,8 +121,7 @@ def _resolve_wire_class(cls_name: str) -> type | None:
         if cls is None:
             continue
         if isinstance(cls, type) and (
-            dataclasses.is_dataclass(cls)
-            or issubclass(cls, _PydanticBaseModel)
+            dataclasses.is_dataclass(cls) or issubclass(cls, _PydanticBaseModel)
         ):
             return cls
     return None

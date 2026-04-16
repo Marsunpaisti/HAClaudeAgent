@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 from pydantic import BaseModel
 
 ADDON_SRC = Path(__file__).resolve().parent.parent / "ha_claude_agent_addon" / "src"

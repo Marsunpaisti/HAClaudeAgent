@@ -41,7 +41,9 @@ async def test_factory_returns_three_named_tools(ha_client):
 
 @pytest.mark.asyncio
 async def test_call_service_returns_string_on_success(ha_client):
-    raw = create_ha_tools_openai.__ha_raw__(ha_client, exposed_entities=["light.kitchen"])
+    raw = create_ha_tools_openai.__ha_raw__(
+        ha_client, exposed_entities=["light.kitchen"]
+    )
     text = await raw["call_service"](
         domain="light",
         service="turn_on",
@@ -54,7 +56,9 @@ async def test_call_service_returns_string_on_success(ha_client):
 
 @pytest.mark.asyncio
 async def test_call_service_blocks_unexposed(ha_client):
-    raw = create_ha_tools_openai.__ha_raw__(ha_client, exposed_entities=["light.kitchen"])
+    raw = create_ha_tools_openai.__ha_raw__(
+        ha_client, exposed_entities=["light.kitchen"]
+    )
     text = await raw["call_service"](
         domain="light",
         service="turn_on",
@@ -68,7 +72,9 @@ async def test_call_service_blocks_unexposed(ha_client):
 @pytest.mark.asyncio
 async def test_get_entity_state_not_found_returns_error_string(ha_client):
     ha_client.get_state.return_value = None
-    raw = create_ha_tools_openai.__ha_raw__(ha_client, exposed_entities=["light.kitchen"])
+    raw = create_ha_tools_openai.__ha_raw__(
+        ha_client, exposed_entities=["light.kitchen"]
+    )
     text = await raw["get_entity_state"](entity_id="light.kitchen")
     assert text.startswith("Error:")
     assert "not found" in text

@@ -11,7 +11,6 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from agents import function_tool
-
 from ha_client import HAClient
 from tool_logic import (
     ToolBlocked,
@@ -77,9 +76,7 @@ def _build_raw(
         domain: Domain filter (e.g. 'light'). Pass empty string to list all.
         Returns entity IDs, names, and states as a JSON string.
         """
-        return await list_entities_logic(
-            ha_client, exposed_set, domain_filter=domain
-        )
+        return await list_entities_logic(ha_client, exposed_set, domain_filter=domain)
 
     return {
         "call_service": call_service,

@@ -152,15 +152,10 @@ def to_jsonable(obj: Any) -> Any:
         return result
     if isinstance(obj, BaseModel):
         cls_name = type(obj).__name__
-        # model_dump(mode="json") handles nested pydantic models, datetimes,
-        # UUID, etc. as JSON-native values, but loses the _type tag on nested
-        # pydantic instances — so walk the dumped dict recursively to re-tag.
-        dumped = obj.model_dump(mode="json")
-        # Walk nested values to preserve _type tagging for any dataclass or
-        # pydantic children the model_dump flattened. We re-run to_jsonable
-        # on the original attribute values (not the dumped copies), so nested
-        # models get their own _type injected.
-        result: dict[str, Any] = {"_type": cls_name}
+        # Walk the model's fields via getattr (not model_dump), so nested
+        # pydantic/dataclass children get their own _type injected by the
+        # recursive to_jsonable call — model_dump would flatten them.
+        result = {"_type": cls_name}
         for field_name in type(obj).model_fields:
             try:
                 value = getattr(obj, field_name)

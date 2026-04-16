@@ -21,7 +21,6 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
     query,
 )
-
 from ha_client import HAClient
 from models import QueryRequest
 from serialization import exception_to_dict, to_jsonable
@@ -42,12 +41,11 @@ class Backend(Protocol):
 
     name: str  # "claude" | "openai"
 
-    async def stream_query(
+    def stream_query(
         self,
         req: QueryRequest,
         ha_client: HAClient,
-    ) -> AsyncGenerator[str, None]:
-        ...
+    ) -> AsyncGenerator[str]: ...
 
 
 class ClaudeBackend:
@@ -63,7 +61,7 @@ class ClaudeBackend:
         self,
         req: QueryRequest,
         ha_client: HAClient,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         _LOGGER.info(
             "Claude query: model=%s, effort=%s, max_turns=%d, resume=%s",
             req.model,
@@ -121,7 +119,6 @@ import uuid  # noqa: E402
 from agents import Agent, Runner, set_default_openai_client  # noqa: E402
 from agents.memory import SQLiteSession  # noqa: E402
 from openai import AsyncOpenAI  # noqa: E402
-
 from openai_events import OpenAIInitEvent, OpenAIResultEvent  # noqa: E402
 from tools_openai import create_ha_tools_openai  # noqa: E402
 
@@ -145,7 +142,7 @@ class OpenAIBackend:
         self,
         req: QueryRequest,
         ha_client: HAClient,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         session_id = req.session_id or uuid.uuid4().hex
         _LOGGER.info(
             "OpenAI query: model=%s, effort=%s, max_turns=%d, session=%s, resumed=%s",
