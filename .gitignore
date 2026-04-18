@@ -4,6 +4,7 @@
 **/*.local.json
 **/*.local.md
 .mcp.json
+.secrets/
 
 # Python
 __pycache__/
