@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "home-assistant": {
+      "type": "local",
+      "command": ["cmd", "/c", "npx", "-y", "@coolver/home-assistant-mcp@latest"],
+      "enabled": true,
+      "environment": {
+        "HA_AGENT_URL": "{file:.secrets/ha-agent-url}",
+        "HA_AGENT_KEY": "{file:.secrets/ha-agent-key}"
+      }
+    }
+  }
+}

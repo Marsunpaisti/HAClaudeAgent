@@ -21,6 +21,8 @@ import math
 import traceback
 from typing import Any
 
+from pydantic import BaseModel
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -145,6 +147,38 @@ def to_jsonable(obj: Any) -> Any:
                     "Dropping unserializable field %s.%s from wire payload: %s",
                     cls_name,
                     f.name,
+                    err,
+                )
+        return result
+    if isinstance(obj, BaseModel):
+        cls_name = type(obj).__name__
+        # Walk the model's fields via getattr (not model_dump), so nested
+        # pydantic/dataclass children get their own _type injected by the
+        # recursive to_jsonable call — model_dump would flatten them.
+        result = {"_type": cls_name}
+        for field_name in type(obj).model_fields:
+            try:
+                value = getattr(obj, field_name)
+            except Exception as err:  # noqa: BLE001
+                _log_field_drop(
+                    cls_name,
+                    field_name,
+                    "Dropping field %s.%s: getattr raised %s: %s",
+                    cls_name,
+                    field_name,
+                    type(err).__name__,
+                    err,
+                )
+                continue
+            try:
+                result[field_name] = to_jsonable(value)
+            except _UnserializableValue as err:
+                _log_field_drop(
+                    cls_name,
+                    field_name,
+                    "Dropping unserializable field %s.%s from wire payload: %s",
+                    cls_name,
+                    field_name,
                     err,
                 )
         return result

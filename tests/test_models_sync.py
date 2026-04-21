@@ -18,3 +18,22 @@ def test_models_files_are_identical():
     assert integration_text == addon_text, (
         "models.py files have diverged — edit one, copy to the other"
     )
+
+
+def test_openai_events_sync():
+    """The add-on and integration copies of openai_events.py must match."""
+    addon_file = REPO_ROOT / "ha_claude_agent_addon" / "src" / "openai_events.py"
+    integration_file = (
+        REPO_ROOT / "custom_components" / "ha_claude_agent" / "openai_events.py"
+    )
+
+    assert addon_file.exists(), f"Missing: {addon_file}"
+    assert integration_file.exists(), f"Missing: {integration_file}"
+    # Normalize line endings to handle CRLF vs LF differences (Windows/Linux)
+    addon_text = addon_file.read_text(encoding="utf-8").replace("\r\n", "\n")
+    integration_text = integration_file.read_text(encoding="utf-8").replace(
+        "\r\n", "\n"
+    )
+    assert addon_text == integration_text, (
+        "openai_events.py copies have drifted — keep them identical"
+    )

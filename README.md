@@ -1,12 +1,13 @@
 # HA Claude Agent
 
-A Home Assistant custom component that adds a conversation agent powered by Claude, with a companion add-on that runs the Claude Code CLI.
+A Home Assistant custom component that adds an AI conversation agent, with a companion add-on that runs either the Claude Code CLI or any OpenAI-compatible endpoint (OpenAI, Google AI Studio, OpenRouter, LiteLLM, Ollama, etc.).
 
 ## Features
 
 - Registers as a native HA conversation agent (appears in the voice assistant picker)
-- Controls exposed devices via MCP tools (`call_service`, `get_entity_state`, `list_entities`)
+- Controls exposed devices via tools (`call_service`, `get_entity_state`, `list_entities`)
 - Multi-turn conversation with session persistence
+- Dual backend: Claude Code CLI (`claude-agent-sdk`) or OpenAI-compatible endpoints (`openai-agents`)
 - Configurable model, system prompt, thinking effort, temperature, and max tokens
 - Multiple agents per integration via ConfigSubentry
 - Security: only entities explicitly exposed to conversation agents can be controlled
@@ -14,7 +15,9 @@ A Home Assistant custom component that adds a conversation agent powered by Clau
 ## Prerequisites
 
 - Home Assistant OS (HAOS) or Supervised installation
-- An Anthropic API key or Claude Code OAuth token
+- One of:
+  - An Anthropic API key or Claude Code OAuth token (for the Claude backend)
+  - An API key for any OpenAI-compatible provider (for the OpenAI backend)
 
 ## Installation
 
@@ -26,8 +29,12 @@ Two components need to be installed: the **integration** (HACS) and the **add-on
 2. Click **⋮ > Repositories**
 3. Paste `https://github.com/Marsunpaisti/HAClaudeAgent` and click **Add**
 4. Find "HA Claude Agent" in the store and click **Install**
-5. In the add-on **Configuration** tab, enter your `auth_token` (Anthropic API key or OAuth token)
+5. In the add-on **Configuration** tab:
+   - Pick `backend`: `claude` or `openai`
+   - Fill in the corresponding credentials (`claude_auth_token` for Claude, or `openai_api_key` + `openai_base_url` for OpenAI-compatible endpoints)
 6. Start the add-on
+
+See the [Choosing a backend](#choosing-a-backend) section for full details and examples.
 
 ### 2. Integration (HACS)
 
@@ -50,6 +57,40 @@ Each conversation agent (subentry) has its own settings:
 | **System prompt**     | _(default)_                 | Custom instructions appended to the HA context                                                    |
 
 To add another agent: go to the integration page and click "Add conversation agent". Each agent can have different models and settings.
+
+## Choosing a backend
+
+The add-on supports two backends, selected via the `backend` option in the add-on **Configuration** tab.
+
+- `claude` — uses the Claude Code CLI via `claude-agent-sdk`. Requires `claude_auth_token`. Built-in web search and web fetch are available.
+- `openai` — uses `openai-agents` against any OpenAI-compatible endpoint. Requires **both** `openai_api_key` and `openai_base_url`. No built-in web search yet.
+
+### Example: Google AI Studio (Gemini)
+
+1. Get an API key from <https://aistudio.google.com/apikey>.
+2. Add-on options:
+   - `backend: openai`
+   - `openai_api_key: <your key>`
+   - `openai_base_url: https://generativelanguage.googleapis.com/v1beta/openai/`
+3. In the HA conversation agent settings, select "Custom..." in the model dropdown and type `gemini-2.0-flash` (or another Gemini model).
+
+### Example: OpenAI
+
+- `openai_base_url: https://api.openai.com/v1`
+- Model: any OpenAI model, e.g. `gpt-4.1`, `gpt-5`, typed via Custom...
+
+### Example: OpenRouter
+
+- `openai_base_url: https://openrouter.ai/api/v1`
+- Model: `openai/gpt-4.1` or any other OpenRouter model string.
+
+### Conversation history
+
+The OpenAI backend stores conversation history in a SQLite database at `/data/sessions.db` inside the add-on. Wiping the add-on's `/data` volume resets all conversations. The Claude backend uses Anthropic's server-side session resume (no local storage required).
+
+### Migration from <=0.6.x
+
+The single `auth_token` option has been split into four fields. On upgrade, set `backend: claude` and paste your existing token into `claude_auth_token`. The legacy `auth_token` field is accepted as a fallback for one minor version (warning logged) but should be migrated.
 
 ## Exposing Entities
 

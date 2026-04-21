@@ -57,9 +57,24 @@ from .const import (
 )
 from .helpers import build_system_prompt
 from .models import QueryRequest
+from .openai_events import OpenAIInitEvent, OpenAIResultEvent
 from .stream import sdk_stream
 from .stream_filters import SourcesFilter, StreamingFilterProcessor
 from .usage import UsagePayload
+
+# openai-agents event types used for matching; import lazily-guarded so a
+# missing openai-agents install (unlikely in practice, but possible during
+# testing) degrades gracefully to Claude-only behavior.
+try:
+    from agents import (
+        AgentUpdatedStreamEvent,
+        RawResponsesStreamEvent,
+        RunItemStreamEvent,
+    )
+except ImportError:
+    AgentUpdatedStreamEvent = None  # type: ignore[assignment,misc]
+    RawResponsesStreamEvent = None  # type: ignore[assignment,misc]
+    RunItemStreamEvent = None  # type: ignore[assignment,misc]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +116,22 @@ _ERROR_MESSAGES: dict[str, str] = {
     ),
     "stream_interrupted": (
         "The connection to the add-on was interrupted mid-stream. Please try again."
+    ),
+    # OpenAI exceptions
+    "openai_auth_failed": (
+        "OpenAI authentication failed. Check the API key in the add-on settings."
+    ),
+    "openai_rate_limit": ("OpenAI rate limit hit. Please wait a moment and try again."),
+    "openai_server_error": (
+        "The model provider returned a server error. Please try again."
+    ),
+    "openai_invalid_model": (
+        "The configured model was not accepted by the provider. "
+        "Check the model name in the conversation agent settings."
+    ),
+    "openai_connection_error": (
+        "Could not reach the OpenAI-compatible endpoint. "
+        "Check the base URL in the add-on settings."
     ),
 }
 
@@ -191,6 +222,23 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         ]
 
     async def _async_handle_message(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+    ) -> ConversationResult:
+        """Handle a conversation turn by delegating to the add-on."""
+        runtime_data = self.entry.runtime_data
+        conversation_id = user_input.conversation_id or chat_log.conversation_id
+        if conversation_id is None:
+            return await self._async_handle_message_unlocked(user_input, chat_log)
+
+        # openai-agents sessions are append-only conversation state. Serialize
+        # overlapping turns on the same HA conversation so they do not race
+        # through the same add-on-backed session.
+        async with runtime_data.conversation_locks.get_lock(conversation_id):
+            return await self._async_handle_message_unlocked(user_input, chat_log)
+
+    async def _async_handle_message_unlocked(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
@@ -314,8 +362,9 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         # soft errors, we want the user's prior conversation context to be
         # preserved for retry. The session is still valid on Claude's side;
         # it's only the current turn that failed.
-        if result_state.session_id:
-            runtime_data.sessions[chat_log.conversation_id] = result_state.session_id
+        conversation_id = chat_log.conversation_id or user_input.conversation_id
+        if result_state.session_id and conversation_id is not None:
+            runtime_data.sessions[conversation_id] = result_state.session_id
 
         # Dispatch usage signal to sensor platform. Fires even on soft errors
         # (error_max_turns, assistant_error) — the API still billed for those.
@@ -367,28 +416,61 @@ async def _deltas_from_sdk_stream(
     resp: aiohttp.ClientResponse,
     state: _StreamResult,
 ) -> AsyncIterator[AssistantContentDeltaDict]:
-    """Adapter: consume sdk_stream() and yield ChatLog deltas.
+    """Route to the right per-backend delta adapter.
 
-    Side-effects: records session/result metadata onto ``state``.  The
-    ChatLog machinery only cares about assistant role markers and
-    content/thinking deltas; other SDK message types (ResultMessage,
-    SystemMessage, RateLimitEvent, etc.) are consumed silently for
-    their metadata.
-
-    Text content deltas are passed through a
-    :class:`StreamingFilterProcessor` to strip sources sections (and
-    any future filter types) before reaching the chat log.
+    Peeks the first typed message to decide which backend's event model
+    is in play, then dispatches. Both adapters share ``_StreamResult``.
     """
+    stream = sdk_stream(resp)
+    try:
+        first = await stream.__anext__()
+    except StopAsyncIteration:
+        return
+
+    if _is_openai_event(first):
+        async for delta in _deltas_from_openai(_prepend(first, stream), state):
+            yield delta
+    else:
+        async for delta in _deltas_from_claude_with_first(first, stream, state):
+            yield delta
+
+
+def _is_openai_event(obj: object) -> bool:
+    """Return True if `obj` is one of the openai-agents wire types."""
+    if isinstance(obj, (OpenAIInitEvent, OpenAIResultEvent)):
+        return True
+    if RawResponsesStreamEvent is not None and isinstance(obj, RawResponsesStreamEvent):
+        return True
+    if RunItemStreamEvent is not None and isinstance(obj, RunItemStreamEvent):
+        return True
+    return AgentUpdatedStreamEvent is not None and isinstance(
+        obj, AgentUpdatedStreamEvent
+    )
+
+
+async def _deltas_from_claude_with_first(
+    first,
+    stream,
+    state: _StreamResult,
+) -> AsyncIterator[AssistantContentDeltaDict]:
+    """Claude-path delta adapter. Body is the pre-refactor
+    ``_deltas_from_sdk_stream`` logic, with the iteration sourced from
+    ``chain([first], stream)`` instead of iterating ``sdk_stream(resp)``
+    directly."""
     processor = StreamingFilterProcessor([SourcesFilter()])
     role_yielded = False
 
-    async for message in sdk_stream(resp):
+    async def _iter():
+        yield first
+        async for m in stream:
+            yield m
+
+    async for message in _iter():
         match message:
             case StreamEvent(event=ev):
                 delta = _delta_from_anthropic_event(ev)
                 if delta is None:
                     continue
-                # Only filter text deltas, not thinking deltas
                 if "content" in delta:
                     filtered = processor.feed(delta["content"])
                     if not filtered:
@@ -430,17 +512,106 @@ async def _deltas_from_sdk_stream(
                 )
 
             case _:
-                # AssistantMessage (non-error), UserMessage (tool results),
-                # and any future Message subtypes are ignored for now.
                 pass
 
-    # Flush any remaining buffered content at end of stream
     final = processor.flush()
     if final:
         if not role_yielded:
             yield {"role": "assistant"}
             role_yielded = True
         yield {"content": final}
+
+
+async def _prepend(first, stream) -> AsyncIterator[Any]:
+    """Yield ``first`` followed by the remaining stream items."""
+    yield first
+    async for item in stream:
+        yield item
+
+
+async def _deltas_from_openai(
+    items: AsyncIterator[Any],
+    state: _StreamResult,
+) -> AsyncIterator[AssistantContentDeltaDict]:
+    """Map openai-agents events to ChatLog deltas + populate _StreamResult."""
+    role_yielded = False
+
+    async for item in items:
+        match item:
+            case OpenAIInitEvent(session_id=sid):
+                state.session_id = sid
+
+            case OpenAIResultEvent(input_tokens=ti, output_tokens=to, error=err):
+                state.usage_dict = {
+                    "input_tokens": ti,
+                    "output_tokens": to,
+                }
+                # OpenAI-compatible providers do not report normalized cost on
+                # this wire path today, but usage dispatch still needs a
+                # concrete value instead of None.
+                state.cost_usd = 0.0
+                if err:
+                    state.assistant_error = err
+
+            case _ if RawResponsesStreamEvent is not None and isinstance(
+                item, RawResponsesStreamEvent
+            ):
+                # Nested .data is the raw OpenAI Responses streaming event.
+                delta = _delta_from_openai_response_event(item.data)
+                if delta is None:
+                    continue
+                if not role_yielded:
+                    yield {"role": "assistant"}
+                    role_yielded = True
+                yield delta
+
+            case _ if RunItemStreamEvent is not None and isinstance(
+                item, RunItemStreamEvent
+            ):
+                # High-level items (tool_called, tool_output,
+                # message_output_created). We don't yield deltas here — the
+                # text already came via RawResponsesStreamEvent. Logged for
+                # visibility.
+                _LOGGER.debug(
+                    "OpenAI run item: %s",
+                    getattr(item, "name", type(item).__name__),
+                )
+
+            case _ if AgentUpdatedStreamEvent is not None and isinstance(
+                item, AgentUpdatedStreamEvent
+            ):
+                # Emitted when the active agent changes (handoffs). We
+                # don't handle handoffs today, so just log for visibility.
+                _LOGGER.debug(
+                    "OpenAI agent updated: %s",
+                    getattr(getattr(item, "new_agent", None), "name", "?"),
+                )
+
+            case _:
+                pass
+
+
+def _delta_from_openai_response_event(data) -> AssistantContentDeltaDict | None:
+    """Map an OpenAI Responses streaming event (dict or Pydantic model)
+    to a ChatLog delta.
+
+    The `data` field of ``RawResponsesStreamEvent`` is a Responses API
+    event object; when it represents an output-text delta, we yield
+    ``{"content": str}``. Other event shapes (start, done, tool deltas,
+    ...) are ignored — downstream types already cover those channels.
+    """
+    # Accept both a dict (post-serialization round-trip) and the openai
+    # SDK's typed event. Try attribute first, fall back to dict key.
+    evt_type = getattr(data, "type", None) or (
+        data.get("type") if isinstance(data, dict) else None
+    )
+    if evt_type == "response.output_text.delta":
+        text = getattr(data, "delta", None) or (
+            data.get("delta") if isinstance(data, dict) else None
+        )
+        if isinstance(text, str) and text:
+            return {"content": text}
+    return None
 
 
 def _delta_from_anthropic_event(

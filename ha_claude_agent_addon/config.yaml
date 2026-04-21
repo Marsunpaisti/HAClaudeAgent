@@ -1,7 +1,7 @@
 name: "HA Claude Agent"
-version: "0.6.2"
+version: "0.7.0"
 slug: "ha_claude_agent"
-description: "Claude Code CLI runner for the HA Claude Agent integration"
+description: "Claude Code CLI / OpenAI-compatible agent runner for the HA Claude Agent integration"
 url: "https://github.com/Marsunpaisti/HAClaudeAgent"
 arch:
   - aarch64
@@ -14,9 +14,15 @@ ports:
 ports_description:
   8099/tcp: "Internal API (not exposed to host)"
 options:
-  auth_token: ""
+  backend: "claude"
+  claude_auth_token: ""
+  openai_api_key: ""
+  openai_base_url: ""
 schema:
-  auth_token: password
+  backend: "list(claude|openai)"
+  claude_auth_token: "password?"
+  openai_api_key: "password?"
+  openai_base_url: "url?"
 init: false
 map:
   - addon_config:rw
