@@ -277,9 +277,7 @@ async def test_openai_backend_passes_model_and_tools_to_runner(
             pass
 
     # AsyncOpenAI built once per request with the right creds.
-    AsyncOpenAICls.assert_called_once_with(
-        base_url="https://example/v1", api_key="k"
-    )
+    AsyncOpenAICls.assert_called_once_with(base_url="https://example/v1", api_key="k")
     # Model wraps the client, no set_default_openai_client races.
     ModelCls.assert_called_once()
     _, model_kwargs = ModelCls.call_args
@@ -310,9 +308,7 @@ async def test_openai_backend_passes_model_and_tools_to_runner(
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_maps_max_effort_to_xhigh(
-    fake_run_streamed, tmp_path
-):
+async def test_openai_backend_maps_max_effort_to_xhigh(fake_run_streamed, tmp_path):
     req = QueryRequest(
         prompt="hello",
         model="gpt-4.1",
@@ -391,9 +387,7 @@ def test_map_openai_exception_server_error():
 
     mock_response = Mock()
     mock_response.request = Mock()
-    err = openai.InternalServerError(
-        message="500", response=mock_response, body=None
-    )
+    err = openai.InternalServerError(message="500", response=mock_response, body=None)
     assert _map_openai_exception_to_key(err) == "openai_server_error"
 
 

@@ -55,6 +55,7 @@ from custom_components.ha_claude_agent.conversation import (  # noqa: E402
     _StreamResult,
 )
 
+
 @pytest.mark.asyncio
 async def test_deltas_from_openai_populates_session_id_from_init():
     state = _StreamResult()
@@ -191,17 +192,16 @@ async def test_deltas_from_openai_roundtrip_error_path_preserves_result():
     `exception` SSE event), the integration still consumes the terminal
     ResultEvent and records usage + assistant_error. Proves the fix for
     the 'sdk_stream raises and drops ResultEvent' bug."""
-    payload = (
-        _sse("OpenAIInitEvent", {"_type": "OpenAIInitEvent", "session_id": "s"})
-        + _sse(
-            "OpenAIResultEvent",
-            {
-                "_type": "OpenAIResultEvent",
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "error": "openai_auth_failed",
-            },
-        )
+    payload = _sse(
+        "OpenAIInitEvent", {"_type": "OpenAIInitEvent", "session_id": "s"}
+    ) + _sse(
+        "OpenAIResultEvent",
+        {
+            "_type": "OpenAIResultEvent",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "error": "openai_auth_failed",
+        },
     )
 
     resp = _FakeSSEResp(payload)

@@ -3,8 +3,8 @@
 import pytest
 
 from custom_components.ha_claude_agent import (
-    BoundedConversationLockMap,
     MAX_SESSIONS,
+    BoundedConversationLockMap,
 )
 
 
@@ -47,7 +47,9 @@ async def test_bounded_conversation_lock_map_keeps_held_lock() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bounded_conversation_lock_map_prunes_released_lock_on_next_access() -> None:
+async def test_bounded_conversation_lock_map_prunes_released_lock_on_next_access() -> (
+    None
+):
     locks = BoundedConversationLockMap()
 
     held = locks.get_lock("conversation-held")
