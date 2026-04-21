@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
-import openai
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKError,
@@ -67,8 +66,13 @@ from .usage import UsagePayload
 # missing openai-agents install (unlikely in practice, but possible during
 # testing) degrades gracefully to Claude-only behavior.
 try:
-    from agents import RawResponsesStreamEvent, RunItemStreamEvent
+    from agents import (
+        AgentUpdatedStreamEvent,
+        RawResponsesStreamEvent,
+        RunItemStreamEvent,
+    )
 except ImportError:
+    AgentUpdatedStreamEvent = None  # type: ignore[assignment,misc]
     RawResponsesStreamEvent = None  # type: ignore[assignment,misc]
     RunItemStreamEvent = None  # type: ignore[assignment,misc]
 
@@ -130,24 +134,6 @@ _ERROR_MESSAGES: dict[str, str] = {
         "Check the base URL in the add-on settings."
     ),
 }
-
-
-def _map_openai_exception_to_key(err: BaseException) -> str | None:
-    """Return the `_ERROR_MESSAGES` key for an openai.* exception, or None."""
-    if isinstance(err, openai.AuthenticationError):
-        return "openai_auth_failed"
-    if isinstance(err, openai.RateLimitError):
-        return "openai_rate_limit"
-    if isinstance(err, openai.NotFoundError):
-        return "openai_invalid_model"
-    if isinstance(err, openai.APIConnectionError):
-        return "openai_connection_error"
-    # Catch-all for remaining openai.APIError subclasses (InternalServerError,
-    # etc.). Keep this check last — more specific subclasses should match
-    # before this catch.
-    if isinstance(err, openai.APIError):
-        return "openai_server_error"
-    return None
 
 
 @dataclass
@@ -236,6 +222,23 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         ]
 
     async def _async_handle_message(
+        self,
+        user_input: ConversationInput,
+        chat_log: ChatLog,
+    ) -> ConversationResult:
+        """Handle a conversation turn by delegating to the add-on."""
+        runtime_data = self.entry.runtime_data
+        conversation_id = user_input.conversation_id or chat_log.conversation_id
+        if conversation_id is None:
+            return await self._async_handle_message_unlocked(user_input, chat_log)
+
+        # openai-agents sessions are append-only conversation state. Serialize
+        # overlapping turns on the same HA conversation so they do not race
+        # through the same add-on-backed session.
+        async with runtime_data.conversation_locks.get_lock(conversation_id):
+            return await self._async_handle_message_unlocked(user_input, chat_log)
+
+    async def _async_handle_message_unlocked(
         self,
         user_input: ConversationInput,
         chat_log: ChatLog,
@@ -335,14 +338,6 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
             return self._error_response(
                 _ERROR_MESSAGES["ClaudeSDKError"], chat_log, user_input.language
             )
-        except openai.APIError as err:
-            key = _map_openai_exception_to_key(err) or "openai_server_error"
-            _LOGGER.error("OpenAI error (%s): %s", type(err).__name__, err)
-            return self._error_response(
-                _ERROR_MESSAGES[key],
-                chat_log,
-                user_input.language,
-            )
 
         t_total = time.monotonic() - t_request_start
         ttft_str = (
@@ -367,8 +362,9 @@ class HAClaudeAgentConversationEntity(ConversationEntity):
         # soft errors, we want the user's prior conversation context to be
         # preserved for retry. The session is still valid on Claude's side;
         # it's only the current turn that failed.
-        if result_state.session_id:
-            runtime_data.sessions[chat_log.conversation_id] = result_state.session_id
+        conversation_id = chat_log.conversation_id or user_input.conversation_id
+        if result_state.session_id and conversation_id is not None:
+            runtime_data.sessions[conversation_id] = result_state.session_id
 
         # Dispatch usage signal to sensor platform. Fires even on soft errors
         # (error_max_turns, assistant_error) — the API still billed for those.
@@ -432,7 +428,7 @@ async def _deltas_from_sdk_stream(
         return
 
     if _is_openai_event(first):
-        async for delta in _deltas_from_openai_with_first(first, stream, state):
+        async for delta in _deltas_from_openai(_prepend(first, stream), state):
             yield delta
     else:
         async for delta in _deltas_from_claude_with_first(first, stream, state):
@@ -445,7 +441,11 @@ def _is_openai_event(obj: object) -> bool:
         return True
     if RawResponsesStreamEvent is not None and isinstance(obj, RawResponsesStreamEvent):
         return True
-    return RunItemStreamEvent is not None and isinstance(obj, RunItemStreamEvent)
+    if RunItemStreamEvent is not None and isinstance(obj, RunItemStreamEvent):
+        return True
+    return AgentUpdatedStreamEvent is not None and isinstance(
+        obj, AgentUpdatedStreamEvent
+    )
 
 
 async def _deltas_from_claude_with_first(
@@ -522,33 +522,21 @@ async def _deltas_from_claude_with_first(
         yield {"content": final}
 
 
-async def _deltas_from_openai_with_first(
-    first,
-    stream,
-    state: _StreamResult,
-) -> AsyncIterator[AssistantContentDeltaDict]:
-    """OpenAI-path delta adapter — prepends the already-peeked ``first``
-    item back onto ``stream`` and delegates to ``_deltas_from_openai``."""
-
-    async def _iter(_resp):
-        yield first
-        async for m in stream:
-            yield m
-
-    async for delta in _deltas_from_openai(resp=None, state=state, sdk_stream=_iter):
-        yield delta
+async def _prepend(first, stream) -> AsyncIterator[Any]:
+    """Yield ``first`` followed by the remaining stream items."""
+    yield first
+    async for item in stream:
+        yield item
 
 
 async def _deltas_from_openai(
-    resp,
+    items: AsyncIterator[Any],
     state: _StreamResult,
-    *,
-    sdk_stream=sdk_stream,  # injectable for tests
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     """Map openai-agents events to ChatLog deltas + populate _StreamResult."""
     role_yielded = False
 
-    async for item in sdk_stream(resp):
+    async for item in items:
         match item:
             case OpenAIInitEvent(session_id=sid):
                 state.session_id = sid
@@ -558,6 +546,10 @@ async def _deltas_from_openai(
                     "input_tokens": ti,
                     "output_tokens": to,
                 }
+                # OpenAI-compatible providers do not report normalized cost on
+                # this wire path today, but usage dispatch still needs a
+                # concrete value instead of None.
+                state.cost_usd = 0.0
                 if err:
                     state.assistant_error = err
 
@@ -583,6 +575,16 @@ async def _deltas_from_openai(
                 _LOGGER.debug(
                     "OpenAI run item: %s",
                     getattr(item, "name", type(item).__name__),
+                )
+
+            case _ if AgentUpdatedStreamEvent is not None and isinstance(
+                item, AgentUpdatedStreamEvent
+            ):
+                # Emitted when the active agent changes (handoffs). We
+                # don't handle handoffs today, so just log for visibility.
+                _LOGGER.debug(
+                    "OpenAI agent updated: %s",
+                    getattr(getattr(item, "new_agent", None), "name", "?"),
                 )
 
             case _:

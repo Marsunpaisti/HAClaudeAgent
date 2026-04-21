@@ -13,9 +13,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncGenerator
 from typing import Any, Protocol, runtime_checkable
 
+import openai
+from agents import Agent, ModelSettings, Runner
+from agents.memory import SQLiteSession
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     create_sdk_mcp_server,
@@ -23,8 +28,12 @@ from claude_agent_sdk import (
 )
 from ha_client import HAClient
 from models import QueryRequest
+from openai import AsyncOpenAI
+from openai.types.shared.reasoning import Reasoning
+from openai_events import OpenAIInitEvent, OpenAIResultEvent
 from serialization import exception_to_dict, to_jsonable
 from tools_claude import create_ha_tools_claude
+from tools_openai import create_ha_tools_openai
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,13 +123,33 @@ class ClaudeBackend:
             yield _sse_event("exception", exception_to_dict(err))
 
 
-import uuid  # noqa: E402
+def _map_openai_exception_to_key(err: BaseException) -> str | None:
+    """Map openai.* exceptions to `_ERROR_MESSAGES` keys used by the
+    integration. Kept on the add-on side so the error-path goes through
+    OpenAIResultEvent.error instead of the raising-exception channel
+    (which sdk_stream converts into a terminal raise on the integration
+    side and drops the terminal ResultEvent)."""
+    if isinstance(err, openai.AuthenticationError):
+        return "openai_auth_failed"
+    if isinstance(err, openai.RateLimitError):
+        return "openai_rate_limit"
+    if isinstance(err, openai.NotFoundError):
+        return "openai_invalid_model"
+    if isinstance(err, openai.APIConnectionError):
+        return "openai_connection_error"
+    if isinstance(err, openai.APIError):
+        return "openai_server_error"
+    return None
 
-from agents import Agent, Runner, set_default_openai_client  # noqa: E402
-from agents.memory import SQLiteSession  # noqa: E402
-from openai import AsyncOpenAI  # noqa: E402
-from openai_events import OpenAIInitEvent, OpenAIResultEvent  # noqa: E402
-from tools_openai import create_ha_tools_openai  # noqa: E402
+
+def _openai_model_settings(effort: str) -> ModelSettings:
+    reasoning_effort = {
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "max": "xhigh",
+    }.get(effort, effort if effort in {"none", "minimal", "xhigh"} else "medium")
+    return ModelSettings(reasoning=Reasoning(effort=reasoning_effort))
 
 
 class OpenAIBackend:
@@ -159,19 +188,21 @@ class OpenAIBackend:
             to_jsonable(OpenAIInitEvent(session_id=session_id)),
         )
 
-        error_text: str | None = None
+        error_key: str | None = None
         input_tokens = 0
         output_tokens = 0
 
         try:
             client = AsyncOpenAI(base_url=self._base_url, api_key=self._api_key)
-            set_default_openai_client(client)
-
             tools = create_ha_tools_openai(ha_client, req.exposed_entities)
             agent = Agent(
                 name="ha_assistant",
                 instructions=req.system_prompt,
-                model=req.model,
+                model=OpenAIChatCompletionsModel(
+                    model=req.model,
+                    openai_client=client,
+                ),
+                model_settings=_openai_model_settings(req.effort),
                 tools=tools,
             )
             session = SQLiteSession(
@@ -188,7 +219,7 @@ class OpenAIBackend:
             async for event in result.stream_events():
                 yield _sse_event(type(event).__name__, to_jsonable(event))
 
-            usage = getattr(result, "usage", None)
+            usage = getattr(result.context_wrapper, "usage", None)
             if usage is not None:
                 input_tokens = getattr(usage, "input_tokens", 0) or 0
                 output_tokens = getattr(usage, "output_tokens", 0) or 0
@@ -199,11 +230,13 @@ class OpenAIBackend:
             raise
         except BaseException as err:  # noqa: BLE001
             _LOGGER.exception("OpenAI query failed")
-            error_text = f"{type(err).__name__}: {err}"
-            yield _sse_event("exception", exception_to_dict(err))
-            # Fall through to emit the terminal result event anyway — the
-            # integration uses ResultEvent presence as the "stream ended
-            # cleanly enough to record usage" signal.
+            # Route errors through the terminal ResultEvent — do NOT yield
+            # an `exception` SSE event. The integration's sdk_stream would
+            # raise on it and tear down the iterator before the terminal
+            # ResultEvent could be consumed, losing usage + error signal.
+            error_key = _map_openai_exception_to_key(err) or (
+                f"{type(err).__name__}: {err}"
+            )
 
         yield _sse_event(
             "OpenAIResultEvent",
@@ -211,7 +244,7 @@ class OpenAIBackend:
                 OpenAIResultEvent(
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
-                    error=error_text,
+                    error=error_key,
                 )
             ),
         )

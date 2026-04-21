@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -45,6 +46,30 @@ class BoundedSessionMap(OrderedDict):
             self.popitem(last=False)
 
 
+class BoundedConversationLockMap(OrderedDict):
+    """Conversation locks capped to the same size as the session cache."""
+
+    def _prune_unlocked(self) -> None:
+        while len(self) > MAX_SESSIONS:
+            for key, lock in list(self.items()):
+                if not lock.locked():
+                    self.pop(key)
+                    break
+            else:
+                # All retained locks are still active. Allow temporary overflow
+                # instead of evicting a held lock and breaking serialization.
+                return
+
+    def get_lock(self, key: str) -> asyncio.Lock:
+        lock = self.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            super().__setitem__(key, lock)
+        self.move_to_end(key)
+        self._prune_unlocked()
+        return lock
+
+
 @dataclass
 class HAClaudeAgentRuntimeData:
     """Runtime data for the HA Claude Agent integration."""
@@ -52,6 +77,9 @@ class HAClaudeAgentRuntimeData:
     addon_url: str
     location: str | None = None
     sessions: BoundedSessionMap = field(default_factory=BoundedSessionMap)
+    conversation_locks: BoundedConversationLockMap = field(
+        default_factory=BoundedConversationLockMap
+    )
 
 
 type HAClaudeAgentConfigEntry = ConfigEntry[HAClaudeAgentRuntimeData]
